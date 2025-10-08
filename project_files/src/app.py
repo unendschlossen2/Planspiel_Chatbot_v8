@@ -57,22 +57,36 @@ def setup_database_connection():
     return db_collection
 
 def rebuild_database_from_source_files(device, embedding_model):
-    """Baut die Datenbank neu auf und nutzt dabei das bereits geladene Embedding-Modell."""
-    with st.spinner("Lösche alte Datenbank-Kollektion..."):
+    """
+    Führt den vollständigen Prozess zum Neuaufbau der Vektor-Datenbank aus den Quelldateien durch.
+    Diese Funktion ist eine direkte Integration der Logik aus dem alten `temp_main.py`.
+    """
+    st.info("Starte den Neuaufbau der Vektor-Datenbank. Dieser Vorgang kann einige Minuten dauern.")
+
+    # 1. Alte Kollektion löschen
+    with st.spinner("Schritt 1/4: Lösche alte Datenbank-Kollektion..."):
         create_and_populate_vector_store(
             chunks_with_embeddings=[],
             db_path=settings.database.persist_path,
             collection_name=settings.database.collection_name,
             force_rebuild_collection=True
         )
+        st.success("Schritt 1/4: Alte Datenbank-Kollektion erfolgreich gelöscht.")
 
-    with st.spinner("Lade Quelldateien und starte Chunking..."):
+    # 2. Quelldateien laden und verarbeiten
+    with st.spinner("Schritt 2/4: Lade und verarbeite Quelldateien..."):
         input_dir = os.path.join("project_files", "input_files")
         file_list = load_markdown_directory(input_dir)
-        all_files_chunks_with_embeddings = []
+        if not file_list:
+            st.error("Keine Markdown-Dateien im `input_files`-Verzeichnis gefunden. Abbruch.")
+            return
 
-        for file_item in file_list:
+        all_chunks = []
+        progress_bar = st.progress(0)
+        for i, file_item in enumerate(file_list):
             normalized_content = normalize_markdown_whitespace(file_item["content"])
+            if not normalized_content.strip():
+                continue
             chunks = split_markdown_by_headers(
                 markdown_text=normalized_content,
                 source_filename=file_item["source"],
@@ -80,23 +94,30 @@ def rebuild_database_from_source_files(device, embedding_model):
                 max_chars_per_chunk=settings.processing.max_chars_per_chunk,
                 min_chars_per_chunk=settings.processing.min_chars_per_chunk
             )
+            all_chunks.extend(chunks)
+            progress_bar.progress((i + 1) / len(file_list), text=f"Verarbeite: {file_item['source']}")
+        st.success(f"Schritt 2/4: Quelldateien erfolgreich verarbeitet. {len(all_chunks)} Chunks erstellt.")
 
-            chunks_with_embeddings_for_file = embed_chunks(
-                chunks_data=chunks,
-                model_id=settings.models.embedding_id,
-                device=device,
-                preloaded_model=embedding_model,
-                normalize_embeddings=True
-            )
-            all_files_chunks_with_embeddings.extend(chunks_with_embeddings_for_file)
+    # 3. Embeddings generieren
+    with st.spinner(f"Schritt 3/4: Generiere Embeddings für {len(all_chunks)} Chunks..."):
+        chunks_with_embeddings = embed_chunks(
+            chunks_data=all_chunks,
+            model_id=settings.models.embedding_id,
+            device=device,
+            preloaded_model=embedding_model,
+            normalize_embeddings=True
+        )
+        st.success("Schritt 3/4: Embeddings erfolgreich generiert.")
 
-    with st.spinner("Fülle die Vektor-Datenbank mit neuen Daten..."):
+    # 4. Datenbank füllen
+    with st.spinner("Schritt 4/4: Fülle die Vektor-Datenbank mit neuen Daten..."):
         create_and_populate_vector_store(
-            chunks_with_embeddings=all_files_chunks_with_embeddings,
+            chunks_with_embeddings=chunks_with_embeddings,
             db_path=settings.database.persist_path,
             collection_name=settings.database.collection_name,
-            force_rebuild_collection=True
+            force_rebuild_collection=False # Die Kollektion wurde bereits in Schritt 1 neu erstellt
         )
+        st.success("Schritt 4/4: Vektor-Datenbank erfolgreich gefüllt.")
 
 # --- Main Chatbot Logic ---
 
@@ -121,10 +142,11 @@ def get_bot_response(user_query: str, chat_history: list):
     if settings.pipeline.enable_conversation_memory and last_query and last_response:
         with st.spinner("Verarbeite Konversationskontext..."):
             condensed_query = condense_conversation(
-                model_name=settings.models.condenser_model_id,
                 last_query=last_query,
                 last_response=last_response,
-                new_query=user_query
+                new_query=user_query,
+                condenser_model_path=settings.models.condenser_model_path,
+                condenser_generation_config=settings.models.condenser_generation_config,
             )
 
     expanded_query = condensed_query
@@ -132,8 +154,9 @@ def get_bot_response(user_query: str, chat_history: list):
         with st.spinner("Erweitere kurze Anfrage..."):
             expanded_query = expand_user_query(
                 user_query=condensed_query,
-                model_name=settings.models.query_expander_id,
-                char_threshold=settings.pipeline.query_expansion_char_threshold
+                char_threshold=settings.pipeline.query_expansion_char_threshold,
+                query_expander_model_path=settings.models.query_expander_model_path,
+                query_expander_generation_config=settings.models.query_expander_generation_config,
             )
 
     with st.spinner(f"Suche nach Dokumenten für: '{expanded_query}'..."):
@@ -247,14 +270,25 @@ with st.sidebar:
     st.info(f"**Reranker:** `{'Aktiviert' if settings.pipeline.use_reranker else 'Deaktiviert'}`")
     st.info(f"**Gerät:** `{st.session_state.device}`")
 
-if st.session_state.rebuild_triggered:
-    st.cache_resource.clear()
+# --- UI Logic ---
+
+# Prüfen, ob die Datenbank existiert oder ein Neuaufbau erzwungen wird
+db_collection = setup_database_connection()
+if not db_collection or settings.database.force_rebuild or st.session_state.rebuild_triggered:
+    if not db_collection and not settings.database.force_rebuild:
+        st.warning("Keine bestehende Datenbank gefunden. Starte den initialen Aufbau...")
+    elif st.session_state.rebuild_triggered:
+        st.info(" manueller Neuaufbau der Datenbank wurde ausgelöst...")
+
+
+    st.cache_resource.clear() # Cache leeren, um Neuladen zu erzwingen
     rebuild_database_from_source_files(st.session_state.device, st.session_state.embedding_model)
     st.session_state.rebuild_triggered = False
-    st.success("Datenbank erfolgreich neu aufgebaut! Die Seite wird neu geladen.")
-    time.sleep(2)
+    st.success("Datenbank erfolgreich (neu) aufgebaut! Die Seite wird neu geladen.")
+    time.sleep(3)
     st.rerun()
 
+# Haupt-Chat-Interface
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])

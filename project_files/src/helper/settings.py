@@ -9,9 +9,11 @@ class ModelSettings(BaseModel):
     reranker_id: str
     llm_model_id: str
     llm_model_path: str
-    query_expander_id: str
-    condenser_model_id: str
     llm_generation_config: Dict[str, Any]
+    condenser_model_path: str
+    condenser_generation_config: Dict[str, Any]
+    query_expander_model_path: str
+    query_expander_generation_config: Dict[str, Any]
 
 class DatabaseSettings(BaseModel):
     persist_path: str

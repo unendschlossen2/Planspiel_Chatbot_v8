@@ -5,27 +5,38 @@ models:
   embedding_id: "infly/inf-retriever-v1-1.5b"
   reranker_id: "BAAI/bge-reranker-large"
 
-  # --- NEU: Einstellungen für das lokale LLM (llama-cpp-python) ---
-  llm_model_id: "local-llm-v1" # Ein Name für das Modell
-  # WICHTIG: Ersetzen Sie dies durch den tatsächlichen Pfad zu Ihrer GGUF-Modelldatei
-  llm_model_path: "path/to/your/model.gguf"
-
-  query_expander_id: "query-expander-v1"
-  condenser_model_id: "condenser-v1"
-
-  # --- NEU: Generierungsoptionen für das lokale LLM ---
+  # --- Haupt-LLM für die Antwortgenerierung ---
+  llm_model_id: "local-llm-v1"
+  llm_model_path: "path/to/your/main_model.gguf"
   llm_generation_config:
     temperature: 0.2
-    max_tokens: 2048 # Ersetzt num_predict von Ollama
-    n_ctx: 4096 # Kontextgröße des Modells
-    n_gpu_layers: -1 # -1, um alle möglichen Schichten auf die GPU auszulagern
-    verbose: false # Ob Llama-cpp-Python detaillierte Logs ausgeben soll
+    max_tokens: 2048
+    n_ctx: 4096
+    n_gpu_layers: -1
+    verbose: false
+
+  # --- Konversations-Verdichter (Condenser) ---
+  condenser_model_path: "path/to/your/condenser_model.gguf"
+  condenser_generation_config:
+    temperature: 0.0
+    max_tokens: 256
+    n_ctx: 2048
+    n_gpu_layers: -1
+    verbose: false
+
+  # --- Anfrage-Erweiterer (Query Expander) ---
+  query_expander_model_path: "path/to/your/expander_model.gguf"
+  query_expander_generation_config:
+    temperature: 0.7
+    max_tokens: 128
+    n_ctx: 2048
+    n_gpu_layers: -1
+    verbose: false
 
 # Einstellungen für den ChromaDB Vektorspeicher
 database:
   persist_path: "DATABASE_STORAGE/chroma_vector_db"
   collection_name: "topsim_gm_coll_gemma3_test"
-  # Auf True setzen, um beim Start eine vollständige Datenverarbeitung und Neuerstellung der Datenbank zu erzwingen
   force_rebuild: False
 
 # Parameter für die Datenverarbeitung und Chunking-Logik

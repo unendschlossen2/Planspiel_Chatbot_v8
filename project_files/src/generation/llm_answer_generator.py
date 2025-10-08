@@ -64,20 +64,26 @@ def generate_llm_answer(
     if prompt_template_str:
         current_prompt_template = prompt_template_str
     else:
-        # Ein robustes Standard-Template
-        current_prompt_template = """Du bist ein hilfreicher Assistent. Deine Aufgabe ist es, die folgende Benutzerfrage ausschließlich basierend auf den unten stehenden Kontext-Schnipseln aus einem Handbuch zu beantworten.
-- Zitiere relevante Quellen direkt in deiner Antwort, indem du `[Source ID: X]` am Ende des Satzes oder Absatzes verwendest, der die Information aus der Quelle enthält.
-- Wenn die Antwort nicht in den Kontext-Schnipseln enthalten ist, antworte: 'Ich konnte leider keine relevanten Informationen zu Ihrer Anfrage im Handbuch finden.'
+        # System-Anweisung mit strikten Zitierregeln, direkt aus dem Modelfile übernommen
+        system_prompt = """Sie sind ein Experte für das Planspiel TOPSIM. Ihre Antworten basieren *ausschließlich* auf den bereitgestellten Kontext-Schnipseln.
 
-Kontext-Schnipsel:
+**Ihre Anweisungen:**
+1.  Formulieren Sie eine hilfreiche und informative Antwort auf die Benutzerfrage.
+2.  **Zitierpflicht**: Fügen Sie nach JEDEM Satz oder Teilsatz, der Informationen aus einer Quelle enthält, die entsprechende Quellenangabe in der Form `[Source ID: x]` hinzu.
+3.  **Mehrfachzitate**: Wenn ein Satz Informationen aus mehreren Quellen kombiniert, listen Sie alle relevanten Quellen auf, z.B. `[Source ID: 1, 3]`.
+4.  **Keine erfundenen Zitate**: Zitieren Sie eine Quelle NUR, wenn die Information direkt aus dem Inhalt dieser Quelle stammt. Fügen Sie keine Zitate zu Begrüßungen oder allgemeinen Füllsätzen hinzu.
+5.  **Tabellen**: Wenn Sie eine Tabelle wiedergeben, kopieren Sie diese exakt und fügen Sie am Ende der Tabellenbeschreibung ein einzelnes Zitat hinzu, das auf die Hauptquelle der Tabelle verweist.
+6.  **Kein externes Wissen**: Verwenden Sie kein Wissen außerhalb der bereitgestellten Schnipsel. Wenn die Antwort nicht im Kontext enthalten ist, geben Sie dies klar an.
+7.  **Sprache**: Antworten Sie immer auf Deutsch.
+"""
+        user_prompt_template = """Kontext-Schnipsel:
 {context}
 
 Benutzerfrage:
 {query}
 
 Antwort:"""
-
-    full_prompt = current_prompt_template.format(context=formatted_context, query=user_query)
+        full_user_prompt = user_prompt_template.format(context=formatted_context, query=user_query)
 
     # Lade das Modell aus dem Cache (oder erstelle es, falls es nicht vorhanden ist)
     llm = load_llm_model(llm_model_path, llm_generation_config)
@@ -97,8 +103,8 @@ Antwort:"""
 
         response_generator = llm.create_chat_completion(
             messages=[
-                {"role": "system", "content": "Du bist ein hilfreicher Assistent."},
-                {"role": "user", "content": full_prompt}
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": full_user_prompt}
             ],
             stream=True,
             **generation_params

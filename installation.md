@@ -6,7 +6,7 @@ Diese Anleitung führt Sie durch die Einrichtung des Chatbots mit einer lokalen,
 
 - **Python:** Version 3.9 oder höher.
 - **GPU:**
-    - **NVIDIA:** Eine CUDA-fähige GPU mit installierten CUDA-Treibern und dem CUDA Toolkit.
+    - **NVIDIA:** Eine CUDA-fähige GPU. **WICHTIG:** Das NVIDIA CUDA Toolkit muss auf Ihrem System installiert sein.
     - **AMD (Windows):** Eine ROCm-fähige GPU mit installiertem ROCm SDK (Beta für Windows). Dies ist für fortgeschrittene Benutzer.
 - **Git:** Für das Klonen des Repositories.
 
@@ -40,7 +40,7 @@ Dies ist der kritischste Schritt. Wählen Sie den Befehl, der zu Ihrer GPU passt
 **Für NVIDIA (CUDA):**
 Führen Sie diesen Befehl aus, um `llama-cpp-python` mit CUDA-Unterstützung zu kompilieren.
 ```bash
-set CMAKE_ARGS="-DLLAMA_CUBLAS=on"
+set CMAKE_ARGS="-DGGML_CUDA=on"
 set FORCE_CMAKE=1
 pip install --upgrade --force-reinstall llama-cpp-python --no-cache-dir
 ```
@@ -60,25 +60,30 @@ Nachdem die GPU-Bibliothek installiert ist, installieren Sie die restlichen Abh�
 pip install -r requirements.txt
 ```
 
-## Schritt 3: Lokales Sprachmodell herunterladen und konfigurieren
+## Schritt 3: Lokale Sprachmodelle herunterladen und konfigurieren
 
-Der Chatbot benötigt ein Sprachmodell im GGUF-Format.
+Der Chatbot benötigt drei separate Sprachmodelle im GGUF-Format: ein Hauptmodell für die Antworten, ein kleines Modell zur Gesprächsverdichtung und ein kleines Modell zur Anfrageerweiterung.
 
-1.  **Modell herunterladen:**
+1.  **Modelle herunterladen:**
     - Besuchen Sie eine Plattform wie [Hugging Face](https://huggingface.co/models?search=gguf).
-    - Suchen Sie nach einem passenden Modell (z.B. `Mistral-7B-Instruct`, `Llama-3-8B-Instruct`) im GGUF-Format.
-    - Laden Sie eine quantisierte Version herunter (z.B. eine mit `Q4_K_M` im Namen für einen guten Kompromiss aus Leistung und Größe).
-2.  **Modell platzieren:**
+    - **Haupt-LLM:** Suchen Sie nach einem leistungsstarken Modell (z.B. `Mistral-7B-Instruct`, `Llama-3-8B-Instruct`).
+    - **Condenser & Expander LLMs:** Suchen Sie nach sehr kleinen, schnellen Modellen (z.B. `TinyLlama-1.1B`, `Qwen2-0.5B`). Für diese Aufgaben ist Geschwindigkeit wichtiger als maximale Qualität.
+    - Laden Sie für alle Modelle quantisierte Versionen herunter (z.B. mit `Q4_K_M` im Namen).
+2.  **Modelle platzieren:**
     - Erstellen Sie einen Ordner für Ihre Modelle, z.B. `C:\Models`.
-    - Platzieren Sie die heruntergeladene `.gguf`-Datei in diesem Ordner.
+    - Platzieren Sie die drei heruntergeladenen `.gguf`-Dateien in diesem Ordner.
 3.  **Konfiguration anpassen:**
     - Öffnen Sie die Datei `project_files/src/helper/config.yaml`.
-    - Suchen Sie den Abschnitt `models` und ändern Sie den Wert von `llm_model_path`, sodass er auf Ihre heruntergeladene Modelldatei verweist.
+    - Suchen Sie den Abschnitt `models` und ändern Sie die Pfade `llm_model_path`, `condenser_model_path` und `query_expander_model_path`, sodass sie auf Ihre heruntergeladenen Modelldateien verweisen.
     ```yaml
     models:
-      # ... andere Einstellungen
-      llm_model_path: "C:/Models/Ihr- heruntergeladenes-Modell.gguf" # WICHTIG: Pfad anpassen!
-      # ... andere Einstellungen
+      # ...
+      llm_model_path: "C:/Models/Ihr-Haupt-Modell.gguf"
+      # ...
+      condenser_model_path: "C:/Models/Ihr-Condenser-Modell.gguf"
+      # ...
+      query_expander_model_path: "C:/Models/Ihr-Expander-Modell.gguf"
+      # ...
     ```
 
 ## Schritt 4: Erster Start und Datenbankaufbau
@@ -86,16 +91,10 @@ Der Chatbot benötigt ein Sprachmodell im GGUF-Format.
 Beim ersten Start muss der Chatbot die Wissensdatenbank verarbeiten und eine Vektor-Datenbank erstellen.
 
 1.  **Konfiguration prüfen:** Öffnen Sie die `config.yaml` und stellen Sie sicher, dass `force_rebuild` auf `true` gesetzt ist.
-    ```yaml
-    database:
-      # ...
-      force_rebuild: true
-    ```
-2.  **Datenbank aufbauen:** Führen Sie die App aus. Dies wird eine Weile dauern, da die Quelldateien verarbeitet und in die Vektor-Datenbank eingebettet werden.
+2.  **Datenbank aufbauen:** Führen Sie die App aus.
     ```bash
     streamlit run project_files/src/app.py
     ```
-    Warten Sie, bis im Terminal keine neuen Meldungen mehr erscheinen und die App im Browser geladen ist.
 3.  **Konfiguration zurücksetzen:** Ändern Sie `force_rebuild` in der `config.yaml` zurück auf `false`, damit die Datenbank bei zukünftigen Starts nicht jedes Mal neu erstellt wird.
 
 ## Schritt 5: Chatbot ausführen
