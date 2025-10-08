@@ -1,0 +1,59 @@
+# config.yaml
+# true/false Werte sind in Kleinbuchstaben geschrieben.
+
+models:
+  embedding_id: "infly/inf-retriever-v1-1.5b"
+  reranker_id: "BAAI/bge-reranker-large" # BAAI/bge-reranker-large # mixedbread-ai/mxbai-rerank-large-v2
+  ollama_llm: "topsim-expert-v1" #FÜR UNI:gemma3n:e4b-it-fp16 # gemma3n:e4b # deepseek-r1:14b-qwen-distill-q4_K_M # deepseek-r1:14b-qwen-distill-q8_0 # gemma3:12b # qwen3:14b-q4_K_M # # qwen3:14b-q8_0
+  query_expander_id: "query-expander-v1"
+  condenser_model_id: "condenser-v1" # -qwen
+  # Generierungsoptionen für das Ollama LLM
+  ollama_options:
+    temperature: 0.2
+    num_predict: 2048
+
+# Einstellungen für den ChromaDB Vektorspeicher
+database:
+  persist_path: "DATABASE_STORAGE/chroma_vector_db"
+  collection_name: "topsim_gm_coll_gemma3_test"
+  # Auf True setzen, um beim Start eine vollständige Datenverarbeitung und Neuerstellung der Datenbank zu erzwingen
+  force_rebuild: False #True # False
+
+# Parameter für die Datenverarbeitung und Chunking-Logik
+processing:
+  initial_split_level: 3
+  max_chars_per_chunk: 2100
+  min_chars_per_chunk: 75
+
+# Parameter zur Feinabstimmung der Retrieval-Augmented Generation (RAG) Pipeline
+pipeline:
+
+  enable_conversation_memory: true
+  use_reranker: true
+  enable_query_expansion: true
+
+  # Buchstabenzahl, unter welcher der Prompt erweitert wird.
+  query_expansion_char_threshold: 25
+  # Anfangsanzahl der Dokumente, die aus dem Vektorspeicher für den Reranker abgerufen werden
+  retrieval_top_k: 15
+  # Fallback k-Wert, falls der Reranker deaktiviert ist
+  default_retrieval_top_k: 3
+  # Minimale Anzahl an Chunks, die an das LLM gesendet werden
+  min_chunks_to_llm: 1
+  # Maximale Anzahl an Chunks, die an das LLM gesendet werden
+  max_chunks_to_llm: 5
+
+  # --- Einstellungen für gap-basiertes Filtern beim Reranker ---
+  # NEUER PARAMETER: Schwellenwert für "potenziell relevant"
+  min_absolute_score_threshold: 0.001
+  # Minimale Anzahl an Chunks, die für die Gap-Detektion benötigt werden
+  min_chunks_for_gap_detection: 4
+  # Multiplikator, wie groß ein Score-Abfall sein muss, um als "signifikante Lücke" zu gelten
+  gap_detection_factor: 0.25
+  # Um Division durch Null oder Gleitkomma-Probleme zu vermeiden
+  small_epsilon: 0.00001
+
+# --- System und Performance ---
+system:
+  # Reduziert Vram-Nutzung, aber erhöht Latenz.
+  low_vram_mode: true
