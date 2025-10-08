@@ -158,8 +158,8 @@ def get_bot_response(user_query: str, chat_history: list):
         llm_answer_generator, citation_map = generate_llm_answer(
             user_query=condensed_query,
             retrieved_chunks=final_docs,
-            ollama_model_name=settings.models.ollama_llm,
-            ollama_options=settings.models.ollama_options,
+            llm_model_path=settings.models.llm_model_path,
+            llm_generation_config=settings.models.llm_generation_config,
         )
         raw_response = "".join([chunk for chunk in llm_answer_generator])
 
@@ -197,7 +197,7 @@ def log_app_state():
         print(f"Datenbank-Status: Fehler beim Zugriff auf die DB - {e}")
 
     print("\n[Konfiguration]")
-    print(f"  LLM: {settings.models.ollama_llm}")
+    print(f"  LLM: {settings.models.llm_model_id} ({settings.models.llm_model_path})")
     print(f"  Reranker: {'Aktiv' if settings.pipeline.use_reranker else 'Inaktiv'}")
     print(f"  Konversationsgedächtnis: {'Aktiv' if settings.pipeline.enable_conversation_memory else 'Inaktiv'}")
 
@@ -243,7 +243,7 @@ with st.sidebar:
     st.button("App beenden", on_click=exit_app, type="primary")
 
     st.header("Konfiguration")
-    st.info(f"**LLM:** `{settings.models.ollama_llm}`")
+    st.info(f"**LLM:** `{settings.models.llm_model_id}`")
     st.info(f"**Reranker:** `{'Aktiviert' if settings.pipeline.use_reranker else 'Deaktiviert'}`")
     st.info(f"**Gerät:** `{st.session_state.device}`")
 

@@ -3,21 +3,30 @@
 
 models:
   embedding_id: "infly/inf-retriever-v1-1.5b"
-  reranker_id: "BAAI/bge-reranker-large" # BAAI/bge-reranker-large # mixedbread-ai/mxbai-rerank-large-v2
-  ollama_llm: "topsim-expert-v1" #FÜR UNI:gemma3n:e4b-it-fp16 # gemma3n:e4b # deepseek-r1:14b-qwen-distill-q4_K_M # deepseek-r1:14b-qwen-distill-q8_0 # gemma3:12b # qwen3:14b-q4_K_M # # qwen3:14b-q8_0
+  reranker_id: "BAAI/bge-reranker-large"
+
+  # --- NEU: Einstellungen für das lokale LLM (llama-cpp-python) ---
+  llm_model_id: "local-llm-v1" # Ein Name für das Modell
+  # WICHTIG: Ersetzen Sie dies durch den tatsächlichen Pfad zu Ihrer GGUF-Modelldatei
+  llm_model_path: "path/to/your/model.gguf"
+
   query_expander_id: "query-expander-v1"
-  condenser_model_id: "condenser-v1" # -qwen
-  # Generierungsoptionen für das Ollama LLM
-  ollama_options:
+  condenser_model_id: "condenser-v1"
+
+  # --- NEU: Generierungsoptionen für das lokale LLM ---
+  llm_generation_config:
     temperature: 0.2
-    num_predict: 2048
+    max_tokens: 2048 # Ersetzt num_predict von Ollama
+    n_ctx: 4096 # Kontextgröße des Modells
+    n_gpu_layers: -1 # -1, um alle möglichen Schichten auf die GPU auszulagern
+    verbose: false # Ob Llama-cpp-Python detaillierte Logs ausgeben soll
 
 # Einstellungen für den ChromaDB Vektorspeicher
 database:
   persist_path: "DATABASE_STORAGE/chroma_vector_db"
   collection_name: "topsim_gm_coll_gemma3_test"
   # Auf True setzen, um beim Start eine vollständige Datenverarbeitung und Neuerstellung der Datenbank zu erzwingen
-  force_rebuild: False #True # False
+  force_rebuild: False
 
 # Parameter für die Datenverarbeitung und Chunking-Logik
 processing:
@@ -27,33 +36,19 @@ processing:
 
 # Parameter zur Feinabstimmung der Retrieval-Augmented Generation (RAG) Pipeline
 pipeline:
-
   enable_conversation_memory: true
   use_reranker: true
   enable_query_expansion: true
-
-  # Buchstabenzahl, unter welcher der Prompt erweitert wird.
   query_expansion_char_threshold: 25
-  # Anfangsanzahl der Dokumente, die aus dem Vektorspeicher für den Reranker abgerufen werden
   retrieval_top_k: 15
-  # Fallback k-Wert, falls der Reranker deaktiviert ist
   default_retrieval_top_k: 3
-  # Minimale Anzahl an Chunks, die an das LLM gesendet werden
   min_chunks_to_llm: 1
-  # Maximale Anzahl an Chunks, die an das LLM gesendet werden
   max_chunks_to_llm: 5
-
-  # --- Einstellungen für gap-basiertes Filtern beim Reranker ---
-  # NEUER PARAMETER: Schwellenwert für "potenziell relevant"
   min_absolute_score_threshold: 0.001
-  # Minimale Anzahl an Chunks, die für die Gap-Detektion benötigt werden
   min_chunks_for_gap_detection: 4
-  # Multiplikator, wie groß ein Score-Abfall sein muss, um als "signifikante Lücke" zu gelten
   gap_detection_factor: 0.25
-  # Um Division durch Null oder Gleitkomma-Probleme zu vermeiden
   small_epsilon: 0.00001
 
 # --- System und Performance ---
 system:
-  # Reduziert Vram-Nutzung, aber erhöht Latenz.
   low_vram_mode: true

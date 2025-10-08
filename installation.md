@@ -1,89 +1,107 @@
-Vorbereitung: Basis-Modelle herunterladen
+# Installationsanleitung für den TOPSIM RAG Chatbot (Native LLM Version)
 
-Bevor Sie die spezialisierten Chatbot-Modelle erstellen, müssen die Basis-LLMs von Ollama heruntergeladen werden. Die hier verwendeten Modelle sind gemma3n:e4b und qwen3:1.7b. Führen Sie die folgenden Befehle in Ihrem Terminal aus:
+Diese Anleitung führt Sie durch die Einrichtung des Chatbots mit einer lokalen, GPU-beschleunigten Sprachmodell-Engine (via `llama-cpp-python`).
 
-ollama pull gemma3n:e4b
-ollama pull qwen3:1.7b
+## Vorbereitung: Systemanforderungen
 
-Schritt 1: Projekt-Setup und Virtuelle Umgebung
+- **Python:** Version 3.9 oder höher.
+- **GPU:**
+    - **NVIDIA:** Eine CUDA-fähige GPU mit installierten CUDA-Treibern und dem CUDA Toolkit.
+    - **AMD (Windows):** Eine ROCm-fähige GPU mit installiertem ROCm SDK (Beta für Windows). Dies ist für fortgeschrittene Benutzer.
+- **Git:** Für das Klonen des Repositories.
 
-Zuerst richten wir den Projektordner und eine isolierte Python-Umgebung ein, um Konflikte mit anderen Projekten zu vermeiden.
+## Schritt 1: Projekt-Setup und Virtuelle Umgebung
 
-Projektordner: Platzieren Sie den gesamten Projektordner an einem geeigneten Ort auf Ihrem Computer (z. B. C:\Projekte\TOPSIM_Chatbot).
+Zuerst richten wir den Projektordner und eine isolierte Python-Umgebung ein.
 
-Terminal öffnen: Öffnen Sie ein Terminal (CMD, PowerShell oder Windows Terminal) und navigieren Sie in diesen Projektordner.
-cd C:\Projekte\TOPSIM_Chatbot
+1.  **Projektordner:** Platzieren Sie den gesamten Projektordner an einem geeigneten Ort (z.B. `C:\Projekte\TOPSIM_Chatbot`).
+2.  **Terminal öffnen:** Öffnen Sie ein Terminal (CMD, PowerShell oder Windows Terminal) und navigieren Sie in diesen Projektordner.
+    ```bash
+    cd C:\Projekte\TOPSIM_Chatbot
+    ```
+3.  **Virtuelle Umgebung erstellen:**
+    ```bash
+    python -m venv venv
+    ```
+4.  **Virtuelle Umgebung aktivieren:**
+    ```bash
+    .\venv\Scripts\activate
+    ```
+    Im Terminal sollte nun `(venv)` vor dem Pfad stehen.
 
-Virtuelle Umgebung erstellen:
-python -m venv venv
+## Schritt 2: Python-Abhängigkeiten installieren
 
-Virtuelle Umgebung aktivieren:
-.\venv\Scripts\activate
+Die Installation ist in zwei Phasen unterteilt: Zuerst die GPU-spezifische Bibliothek, dann die restlichen Pakete.
 
-Im Terminal sollte nun (venv) vor dem Pfad stehen.
+### 2.1 GPU-beschleunigtes LLM-Backend installieren (WICHTIG!)
 
-Schritt 2: Ollama installieren und einrichten
+Dies ist der kritischste Schritt. Wählen Sie den Befehl, der zu Ihrer GPU passt.
 
-Ollama ist die Software, die die lokalen Sprachmodelle ausführt.
+**Für NVIDIA (CUDA):**
+Führen Sie diesen Befehl aus, um `llama-cpp-python` mit CUDA-Unterstützung zu kompilieren.
+```bash
+set CMAKE_ARGS="-DLLAMA_CUBLAS=on"
+set FORCE_CMAKE=1
+pip install --upgrade --force-reinstall llama-cpp-python --no-cache-dir
+```
 
-Ollama herunterladen: Besuchen Sie ollama.com und laden Sie die Windows-Version herunter.
+**Für AMD (ROCm auf Windows - Beta):**
+Dieser Prozess ist experimentell. Stellen Sie sicher, dass Ihr ROCm-SDK korrekt installiert ist.
+```bash
+set CMAKE_ARGS="-DLLAMA_HIPBLAS=on"
+set FORCE_CMAKE=1
+pip install --upgrade --force-reinstall llama-cpp-python --no-cache-dir
+```
 
-Installation: Führen Sie das Installationsprogramm aus. Ollama wird als Hintergrunddienst eingerichtet.
+### 2.2 Standard-Pakete installieren
 
-Überprüfung: Öffnen Sie ein neues Terminal und geben Sie "ollama --version" ein, um zu bestätigen, dass die Installation erfolgreich war.
-
-Schritt 3: Python-Abhängigkeiten installieren
-
-Wir installieren nun alle notwendigen Python-Pakete, einschließlich des wichtigen Fixes für pydantic.
-
-Standard-Pakete installieren: Stellen Sie sicher, dass Ihre virtuelle Umgebung aktiv ist, und führen Sie den folgenden Befehl aus:
+Nachdem die GPU-Bibliothek installiert ist, installieren Sie die restlichen Abhängigkeiten aus der `requirements.txt`-Datei.
+```bash
 pip install -r requirements.txt
+```
 
-Pydantic-Konflikt beheben (Wichtig!): Um den bekannten "NameError: name 'sys' is not defined"-Fehler zu beheben, müssen wir bestimmte Versionen von pydantic und typer erzwingen. Führen Sie die folgenden Befehle nacheinander aus:
-pip uninstall -y pydantic pydantic_core typer
+## Schritt 3: Lokales Sprachmodell herunterladen und konfigurieren
 
-Warten Sie, bis der Befehl abgeschlossen ist, und führen Sie dann den nächsten aus:
-pip install pydantic==2.5.3
+Der Chatbot benötigt ein Sprachmodell im GGUF-Format.
 
-Und schließlich:
-pip install typer==0.9.0
+1.  **Modell herunterladen:**
+    - Besuchen Sie eine Plattform wie [Hugging Face](https://huggingface.co/models?search=gguf).
+    - Suchen Sie nach einem passenden Modell (z.B. `Mistral-7B-Instruct`, `Llama-3-8B-Instruct`) im GGUF-Format.
+    - Laden Sie eine quantisierte Version herunter (z.B. eine mit `Q4_K_M` im Namen für einen guten Kompromiss aus Leistung und Größe).
+2.  **Modell platzieren:**
+    - Erstellen Sie einen Ordner für Ihre Modelle, z.B. `C:\Models`.
+    - Platzieren Sie die heruntergeladene `.gguf`-Datei in diesem Ordner.
+3.  **Konfiguration anpassen:**
+    - Öffnen Sie die Datei `project_files/src/helper/config.yaml`.
+    - Suchen Sie den Abschnitt `models` und ändern Sie den Wert von `llm_model_path`, sodass er auf Ihre heruntergeladene Modelldatei verweist.
+    ```yaml
+    models:
+      # ... andere Einstellungen
+      llm_model_path: "C:/Models/Ihr- heruntergeladenes-Modell.gguf" # WICHTIG: Pfad anpassen!
+      # ... andere Einstellungen
+    ```
 
-Schritt 4: Lokale LLM-Modelle erstellen
+## Schritt 4: Erster Start und Datenbankaufbau
 
-Der Chatbot verwendet mehrere spezialisierte Modelle. Wir müssen Ollama anweisen, diese aus den Konfigurationsdateien (Modelfile) zu erstellen.
+Beim ersten Start muss der Chatbot die Wissensdatenbank verarbeiten und eine Vektor-Datenbank erstellen.
 
-Haupt-Expertenmodell erstellen:
-ollama create topsim-expert-v1 -f ./TopsimExpert.Modelfile
+1.  **Konfiguration prüfen:** Öffnen Sie die `config.yaml` und stellen Sie sicher, dass `force_rebuild` auf `true` gesetzt ist.
+    ```yaml
+    database:
+      # ...
+      force_rebuild: true
+    ```
+2.  **Datenbank aufbauen:** Führen Sie die App aus. Dies wird eine Weile dauern, da die Quelldateien verarbeitet und in die Vektor-Datenbank eingebettet werden.
+    ```bash
+    streamlit run project_files/src/app.py
+    ```
+    Warten Sie, bis im Terminal keine neuen Meldungen mehr erscheinen und die App im Browser geladen ist.
+3.  **Konfiguration zurücksetzen:** Ändern Sie `force_rebuild` in der `config.yaml` zurück auf `false`, damit die Datenbank bei zukünftigen Starts nicht jedes Mal neu erstellt wird.
 
-Konversations-Verdichter erstellen:
-ollama create condenser-v1 -f ./ConversationCondenser.Modelfile
+## Schritt 5: Chatbot ausführen
 
-Anfrage-Erweiterer erstellen:
-ollama create query-expander-v1 -f ./QueryExpander.Modelfile
-
-Schritt 5: Erster Start und Datenbankaufbau
-
-Beim ersten Start muss der Chatbot die Wissensdatenbank (Topsim Handbuch Markdown.md) verarbeiten und eine Vektor-Datenbank erstellen.
-
-Konfiguration prüfen: Öffnen Sie die Datei config.yaml im src/helper/-Verzeichnis. Stellen Sie sicher, dass force_rebuild auf true gesetzt ist.
-
-Datenbank aufbauen: Führen Sie das Hauptskript aus. Dies wird eine Weile dauern.
-python src/temp_main.py
-
-Warten Sie, bis der Prozess abgeschlossen ist und die Meldung "TOPSIM RAG Chatbot Bereit" erscheint. Sie können das Programm danach mit "quit" beenden.
-
-Konfiguration zurücksetzen: Ändern Sie force_rebuild in der config.yaml zurück auf false, damit die Datenbank bei zukünftigen Starts nicht jedes Mal neu erstellt wird.
-
-Schritt 6: Chatbot ausführen
-
-Sie können den Chatbot nun entweder über das Terminal oder über die grafische Benutzeroberfläche starten.
-
-Terminal-Version (CLI):
-python src/temp_main.py
-
-Grafische Benutzeroberfläche (GUI):
-streamlit run app.py
-
-Ein Browser-Tab öffnet sich automatisch unter http://localhost:8501.
-
-** KI-Generiert
+Nachdem die Ersteinrichtung abgeschlossen ist, können Sie den Chatbot jederzeit mit diesem Befehl starten:
+```bash
+streamlit run project_files/src/app.py
+```
+Ein Browser-Tab öffnet sich automatisch unter `http://localhost:8501`.

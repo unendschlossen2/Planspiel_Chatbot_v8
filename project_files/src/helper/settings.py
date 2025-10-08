@@ -7,10 +7,11 @@ from typing import Dict, Any
 class ModelSettings(BaseModel):
     embedding_id: str
     reranker_id: str
-    ollama_llm: str
+    llm_model_id: str
+    llm_model_path: str
     query_expander_id: str
     condenser_model_id: str
-    ollama_options: Dict[str, Any]
+    llm_generation_config: Dict[str, Any]
 
 class DatabaseSettings(BaseModel):
     persist_path: str

@@ -1,0 +1,11 @@
+streamlit
+torch
+transformers
+sentence-transformers
+chromadb
+pyyaml
+pydantic
+numpy
+llama-cpp-python
+accelerate
+bitsandbytes
