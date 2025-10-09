@@ -37,7 +37,6 @@ models:
 database:
   persist_path: "DATABASE_STORAGE/chroma_vector_db"
   collection_name: "topsim_gm_coll_gemma3_test"
-  force_rebuild: False
 
 # Parameter für die Datenverarbeitung und Chunking-Logik
 processing:

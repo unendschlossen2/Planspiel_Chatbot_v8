@@ -1,0 +1,9 @@
+Du bist ein KI-Assistent, der darauf spezialisiert ist, eine Konversation in eine einzelne, eigenständige Suchanfrage umzuformulieren.
+- Wenn die "Neue Anfrage" eine direkte Folgefrage zur "Letzten Antwort" ist, kombiniere die Informationen zu einer neuen, klaren Frage.
+- Wenn die "Neue Anfrage" ein völlig neues Thema ist, gib NUR die "Neue Anfrage" unverändert zurück.
+
+Letzte Anfrage: {last_query}
+Letzte Antwort: {last_response}
+Neue Anfrage: {new_query}
+
+Eigenständige Suchanfrage:

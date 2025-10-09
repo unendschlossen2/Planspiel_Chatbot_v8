@@ -2,6 +2,7 @@ from typing import List, Dict, Any, Optional, Generator, Tuple
 from llama_cpp import Llama
 import streamlit as st
 import os
+from helper.file_loader import load_prompt_template
 
 # --- Model Caching ---
 @st.cache_resource
@@ -61,29 +62,20 @@ def generate_llm_answer(
 
     formatted_context, citation_map = format_retrieved_context(retrieved_chunks)
 
-    if prompt_template_str:
-        current_prompt_template = prompt_template_str
-    else:
-        # System-Anweisung mit strikten Zitierregeln, direkt aus dem Modelfile übernommen
-        system_prompt = """Sie sind ein Experte für das Planspiel TOPSIM. Ihre Antworten basieren *ausschließlich* auf den bereitgestellten Kontext-Schnipseln.
+    # Lade das System-Prompt aus der externen Datei
+    system_prompt = load_prompt_template("answer_generator.txt")
+    if not system_prompt:
+        st.error("Konnte das System-Prompt für den Antwort-Generator nicht laden. Fällt auf Standard-Prompt zurück.")
+        system_prompt = "Du bist ein hilfreicher Assistent." # Fallback
 
-**Ihre Anweisungen:**
-1.  Formulieren Sie eine hilfreiche und informative Antwort auf die Benutzerfrage.
-2.  **Zitierpflicht**: Fügen Sie nach JEDEM Satz oder Teilsatz, der Informationen aus einer Quelle enthält, die entsprechende Quellenangabe in der Form `[Source ID: x]` hinzu.
-3.  **Mehrfachzitate**: Wenn ein Satz Informationen aus mehreren Quellen kombiniert, listen Sie alle relevanten Quellen auf, z.B. `[Source ID: 1, 3]`.
-4.  **Keine erfundenen Zitate**: Zitieren Sie eine Quelle NUR, wenn die Information direkt aus dem Inhalt dieser Quelle stammt. Fügen Sie keine Zitate zu Begrüßungen oder allgemeinen Füllsätzen hinzu.
-5.  **Tabellen**: Wenn Sie eine Tabelle wiedergeben, kopieren Sie diese exakt und fügen Sie am Ende der Tabellenbeschreibung ein einzelnes Zitat hinzu, das auf die Hauptquelle der Tabelle verweist.
-6.  **Kein externes Wissen**: Verwenden Sie kein Wissen außerhalb der bereitgestellten Schnipsel. Wenn die Antwort nicht im Kontext enthalten ist, geben Sie dies klar an.
-7.  **Sprache**: Antworten Sie immer auf Deutsch.
-"""
-        user_prompt_template = """Kontext-Schnipsel:
+    user_prompt_template = """Kontext-Schnipsel:
 {context}
 
 Benutzerfrage:
 {query}
 
 Antwort:"""
-        full_user_prompt = user_prompt_template.format(context=formatted_context, query=user_query)
+    full_user_prompt = user_prompt_template.format(context=formatted_context, query=user_query)
 
     # Lade das Modell aus dem Cache (oder erstelle es, falls es nicht vorhanden ist)
     llm = load_llm_model(llm_model_path, llm_generation_config)

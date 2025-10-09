@@ -2,6 +2,7 @@ from typing import Optional, Dict, Any
 from llama_cpp import Llama
 import streamlit as st
 import os
+from helper.file_loader import load_prompt_template
 
 # --- Model Caching ---
 @st.cache_resource
@@ -50,16 +51,14 @@ def condense_conversation(
         print("Condenser-Modell nicht verfügbar, überspringe Verdichtung.")
         return new_query
 
-    # Erstelle den Prompt für das Condenser-Modell
-    prompt = f"""Du bist ein KI-Assistent, der darauf spezialisiert ist, eine Konversation in eine einzelne, eigenständige Suchanfrage umzuformulieren.
-- Wenn die "Neue Anfrage" eine direkte Folgefrage zur "Letzten Antwort" ist, kombiniere die Informationen zu einer neuen, klaren Frage.
-- Wenn die "Neue Anfrage" ein völlig neues Thema ist, gib NUR die "Neue Anfrage" unverändert zurück.
+    # Lade das Prompt-Template aus der externen Datei
+    prompt_template = load_prompt_template("conversation_condenser.txt")
+    if not prompt_template:
+        st.error("Konnte das Prompt-Template für den Conversation Condenser nicht laden. Überspringe Verdichtung.")
+        return new_query
 
-Letzte Anfrage: {last_query}
-Letzte Antwort: {last_response}
-Neue Anfrage: {new_query}
-
-Eigenständige Suchanfrage:"""
+    # Fülle die Platzhalter im Template
+    prompt = prompt_template.format(last_query=last_query, last_response=last_response, new_query=new_query)
 
     try:
         generation_params = {

@@ -2,6 +2,7 @@ from typing import Dict, Any
 from llama_cpp import Llama
 import streamlit as st
 import os
+from helper.file_loader import load_prompt_template
 
 # --- Model Caching ---
 @st.cache_resource
@@ -47,18 +48,14 @@ def expand_user_query(
         print("Query Expander-Modell nicht verfügbar, überspringe Erweiterung.")
         return user_query
 
-    # Erstelle den Prompt für das Expander-Modell
-    prompt = f"""Du bist ein KI-Assistent, der darauf spezialisiert ist, kurze Stichworte oder unvollständige Sätze in eine vollständige, klare Frage umzuformulieren, die sich auf das TOPSIM Planspiel bezieht.
+    # Lade das Prompt-Template aus der externen Datei
+    prompt_template = load_prompt_template("query_expander.txt")
+    if not prompt_template:
+        st.error("Konnte das Prompt-Template für den Query Expander nicht laden. Überspringe Erweiterung.")
+        return user_query
 
-Beispiele:
-- Stichwort: "Dividendenentscheidung" -> Erweiterte Frage: "Wie treffe ich eine Dividendenentscheidung im TOPSIM Planspiel?"
-- Stichwort: "Marketingbudget" -> Erweiterte Frage: "Welche Faktoren sollte ich bei der Festlegung des Marketingbudgets berücksichtigen?"
-- Stichwort: "Produktionskapazität erhöhen" -> Erweiterte Frage: "Was sind die Schritte, um die Produktionskapazität in TOPSIM zu erhöhen?"
-
-Formuliere die folgende Anfrage in eine vollständige Frage um:
-Stichwort: "{user_query}"
-
-Erweiterte Frage:"""
+    # Fülle die Platzhalter im Template
+    prompt = prompt_template.format(user_query=user_query)
 
     try:
         generation_params = {

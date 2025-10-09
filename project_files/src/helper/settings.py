@@ -18,7 +18,6 @@ class ModelSettings(BaseModel):
 class DatabaseSettings(BaseModel):
     persist_path: str
     collection_name: str
-    force_rebuild: bool
 
 class ProcessingSettings(BaseModel):
     initial_split_level: int = Field(..., gt=0)

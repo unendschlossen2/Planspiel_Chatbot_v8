@@ -51,3 +51,24 @@ def load_markdown_directory(directory_path: str) -> List[Dict[str, str]]:
                 documents.append(doc)
     print(f"{len(documents)} Markdown-Dokumente geladen.")
     return documents
+
+def load_prompt_template(prompt_name: str) -> Optional[str]:
+    """
+    Lädt eine Prompt-Vorlage aus dem `prompts`-Verzeichnis.
+    Args:
+        prompt_name: Der Dateiname der Vorlage (z.B. "answer_generator.txt").
+    Returns:
+        Der Inhalt der Prompt-Vorlage als String oder None bei einem Fehler.
+    """
+    script_dir = Path(__file__).parent.resolve()
+    prompt_path = script_dir.parent / "prompts" / prompt_name
+
+    if not prompt_path.exists():
+        print(f"FEHLER: Prompt-Datei nicht gefunden unter: {prompt_path}")
+        return None
+    try:
+        with open(prompt_path, "r", encoding="utf-8") as f:
+            return f.read()
+    except Exception as e:
+        print(f"FEHLER beim Laden der Prompt-Datei '{prompt_name}': {e}")
+        return None

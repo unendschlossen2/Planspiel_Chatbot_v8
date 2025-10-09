@@ -10,6 +10,7 @@ from typing import Set
 # --- Import all your project's modules ---
 from helper.settings import settings
 from helper.load_gpu import load_gpu
+from helper.logger import SessionLogger
 from embeddings.embedding_generator import load_embedding_model, embed_chunks
 from retrieval.retriever import embed_query, query_vector_store
 from retrieval.reranker import load_reranker_model, gap_based_rerank_and_filter
@@ -121,14 +122,22 @@ def rebuild_database_from_source_files(device, embedding_model):
 
 # --- Main Chatbot Logic ---
 
-def get_bot_response(user_query: str, chat_history: list):
+def get_bot_response(
+    user_query: str,
+    chat_history: list,
+    temperature: float,
+    use_reranker: bool,
+    retrieval_top_k: int,
+    enable_query_expansion: bool,
+    enable_conversation_memory: bool
+):
     """Enthält die vollständige RAG-Pipeline-Logik."""
     device = st.session_state.device
     embedding_model, reranker_model = st.session_state.embedding_model, st.session_state.reranker_model
     db_collection = setup_database_connection()
 
     if not db_collection:
-        return "Fehler: Datenbank-Kollektion konnte nicht geladen werden.", ""
+        return "Fehler: Datenbank-Kollektion konnte nicht geladen werden.", "", user_query
 
     last_query = None
     last_response = None
@@ -139,7 +148,7 @@ def get_bot_response(user_query: str, chat_history: list):
             last_response = chat_history[-1]['content']
 
     condensed_query = user_query
-    if settings.pipeline.enable_conversation_memory and last_query and last_response:
+    if enable_conversation_memory and last_query and last_response:
         with st.spinner("Verarbeite Konversationskontext..."):
             condensed_query = condense_conversation(
                 last_query=last_query,
@@ -150,7 +159,7 @@ def get_bot_response(user_query: str, chat_history: list):
             )
 
     expanded_query = condensed_query
-    if settings.pipeline.enable_query_expansion and len(condensed_query) < settings.pipeline.query_expansion_char_threshold:
+    if enable_query_expansion and len(condensed_query) < settings.pipeline.query_expansion_char_threshold:
         with st.spinner("Erweitere kurze Anfrage..."):
             expanded_query = expand_user_query(
                 user_query=condensed_query,
@@ -161,10 +170,10 @@ def get_bot_response(user_query: str, chat_history: list):
 
     with st.spinner(f"Suche nach Dokumenten für: '{expanded_query}'..."):
         query_embedding = embed_query(embedding_model, expanded_query)
-        retrieved_docs = query_vector_store(db_collection, query_embedding, settings.pipeline.retrieval_top_k)
+        retrieved_docs = query_vector_store(db_collection, query_embedding, retrieval_top_k)
 
         final_docs = retrieved_docs
-        if settings.pipeline.use_reranker and reranker_model and retrieved_docs:
+        if use_reranker and reranker_model and retrieved_docs:
             final_docs = gap_based_rerank_and_filter(
                 user_query=expanded_query,
                 initial_retrieved_docs=retrieved_docs,
@@ -175,14 +184,18 @@ def get_bot_response(user_query: str, chat_history: list):
             )
 
     if not final_docs:
-        return "Ich konnte leider keine relevanten Informationen zu Ihrer Anfrage im Handbuch finden.", ""
+        return "Ich konnte leider keine relevanten Informationen zu Ihrer Anfrage im Handbuch finden.", "", user_query
+
+    # Erstelle eine Kopie der Generation-Config, um sie für diese Anfrage zu modifizieren
+    generation_config = settings.models.llm_generation_config.copy()
+    generation_config["temperature"] = temperature
 
     with st.spinner("Generiere Antwort..."):
         llm_answer_generator, citation_map = generate_llm_answer(
             user_query=condensed_query,
             retrieved_chunks=final_docs,
             llm_model_path=settings.models.llm_model_path,
-            llm_generation_config=settings.models.llm_generation_config,
+            llm_generation_config=generation_config,
         )
         raw_response = "".join([chunk for chunk in llm_answer_generator])
 
@@ -204,7 +217,8 @@ def get_bot_response(user_query: str, chat_history: list):
                 sources_list.append(f"- [{source_id}] **{info['filename']}**, Abschnitt: *{info['header']}*")
         sources_text = "\n".join(sources_list)
 
-    return formatted_response, sources_text
+    # Gib die finale Anfrage zurück, damit sie geloggt werden kann
+    return formatted_response, sources_text, expanded_query
 
 # --- Helper function for logging ---
 def log_app_state():
@@ -245,6 +259,20 @@ if "models_loaded" not in st.session_state:
     st.session_state.embedding_model = embedding_model
     st.session_state.reranker_model = reranker_model
     st.session_state.models_loaded = True
+if "session_logger" not in st.session_state:
+    st.session_state.session_logger = SessionLogger()
+
+# Initialisierung für UI-gesteuerte Pipeline-Parameter
+if "temperature" not in st.session_state:
+    st.session_state.temperature = settings.models.llm_generation_config.get("temperature", 0.2)
+if "retrieval_top_k" not in st.session_state:
+    st.session_state.retrieval_top_k = settings.pipeline.retrieval_top_k
+if "use_reranker" not in st.session_state:
+    st.session_state.use_reranker = settings.pipeline.use_reranker
+if "enable_query_expansion" not in st.session_state:
+    st.session_state.enable_query_expansion = settings.pipeline.enable_query_expansion
+if "enable_conversation_memory" not in st.session_state:
+    st.session_state.enable_conversation_memory = settings.pipeline.enable_conversation_memory
 
 def trigger_rebuild():
     st.session_state.rebuild_triggered = True
@@ -254,31 +282,15 @@ def exit_app():
     # This is a clean way to stop the Streamlit server process
     os._exit(0)
 
-with st.sidebar:
-    st.header("Steuerung")
-    if st.button("Neuer Chat"):
-        print("\n[AKTION] 'Neuer Chat' geklickt. Chat-Verlauf wird zurückgesetzt.")
-        st.session_state.messages = []
-        st.rerun()
-
-    st.button("Datenbank neu aufbauen", on_click=trigger_rebuild)
-    st.button("Zustand in Konsole ausgeben", on_click=log_app_state)
-    st.button("App beenden", on_click=exit_app, type="primary")
-
-    st.header("Konfiguration")
-    st.info(f"**LLM:** `{settings.models.llm_model_id}`")
-    st.info(f"**Reranker:** `{'Aktiviert' if settings.pipeline.use_reranker else 'Deaktiviert'}`")
-    st.info(f"**Gerät:** `{st.session_state.device}`")
-
 # --- UI Logic ---
 
 # Prüfen, ob die Datenbank existiert oder ein Neuaufbau erzwungen wird
 db_collection = setup_database_connection()
-if not db_collection or settings.database.force_rebuild or st.session_state.rebuild_triggered:
-    if not db_collection and not settings.database.force_rebuild:
+if not db_collection or st.session_state.rebuild_triggered:
+    if not db_collection:
         st.warning("Keine bestehende Datenbank gefunden. Starte den initialen Aufbau...")
     elif st.session_state.rebuild_triggered:
-        st.info(" manueller Neuaufbau der Datenbank wurde ausgelöst...")
+        st.info("Manueller Neuaufbau der Datenbank wurde ausgelöst...")
 
 
     st.cache_resource.clear() # Cache leeren, um Neuladen zu erzwingen
@@ -288,31 +300,123 @@ if not db_collection or settings.database.force_rebuild or st.session_state.rebu
     time.sleep(3)
     st.rerun()
 
-# Haupt-Chat-Interface
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+# Erstelle die Tabs
+tab_chat, tab_settings = st.tabs(["💬 Chat", "⚙️ Einstellungen"])
 
-if prompt := st.chat_input("Stellen Sie Ihre Frage an das TOPSIM Handbuch..."):
-    print(f"\n[BENUTZEREINGABE] Neue Anfrage erhalten: '{prompt}'")
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
+with tab_chat:
+    with st.sidebar:
+        st.header("⚙️ Generation Parameters")
+        st.session_state.temperature = st.slider(
+            "LLM Temperature", min_value=0.0, max_value=1.0,
+            value=st.session_state.temperature, step=0.05,
+            help="Controls the randomness of the model's output. Lower values make it more deterministic."
+        )
+        st.session_state.retrieval_top_k = st.slider(
+            "Retrieval Top-K", min_value=1, max_value=20,
+            value=st.session_state.retrieval_top_k, step=1,
+            help="Number of initial documents to retrieve from the vector store."
+        )
+        st.session_state.use_reranker = st.toggle(
+            "Use Reranker", value=st.session_state.use_reranker,
+            help="Enable or disable the reranking step to improve document relevance."
+        )
+        st.session_state.enable_query_expansion = st.toggle(
+            "Enable Query Expansion", value=st.session_state.enable_query_expansion,
+            help="Automatically expand short queries to improve retrieval."
+        )
+        st.session_state.enable_conversation_memory = st.toggle(
+            "Enable Conversation Memory", value=st.session_state.enable_conversation_memory,
+            help="Allow the chatbot to remember the context of the last interaction."
+        )
 
-    with st.chat_message("assistant"):
-        response_text, sources = get_bot_response(prompt, st.session_state.messages)
+    # Haupt-Chat-Interface
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
 
-        placeholder = st.empty()
-        full_response = ""
-        for char in response_text:
-            full_response += char
-            placeholder.markdown(full_response + "▌")
-            time.sleep(0.01)
-        placeholder.markdown(full_response)
+    if prompt := st.chat_input("Stellen Sie Ihre Frage an das TOPSIM Handbuch..."):
+        print(f"\n[BENUTZEREINGABE] Neue Anfrage erhalten: '{prompt}'")
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
 
-        if sources:
-            with st.expander("**Quellen**"):
-                st.markdown(sources)
+        with st.chat_message("assistant"):
+            response_text, sources, final_query = get_bot_response(
+                user_query=prompt,
+                chat_history=st.session_state.messages,
+                temperature=st.session_state.temperature,
+                use_reranker=st.session_state.use_reranker,
+                retrieval_top_k=st.session_state.retrieval_top_k,
+                enable_query_expansion=st.session_state.enable_query_expansion,
+                enable_conversation_memory=st.session_state.enable_conversation_memory,
+            )
 
-    full_bot_message = response_text + (f"\n\n**Quellen**\n\n{sources}" if sources else "")
-    st.session_state.messages.append({"role": "assistant", "content": full_bot_message})
+            placeholder = st.empty()
+            full_response = ""
+            for char in response_text:
+                full_response += char
+                placeholder.markdown(full_response + "▌")
+                time.sleep(0.01)
+            placeholder.markdown(full_response)
+
+            if sources:
+                with st.expander("**Quellen**"):
+                    st.markdown(sources)
+
+        full_bot_message = response_text + (f"\n\n**Quellen**\n\n{sources}" if sources else "")
+        # Log the complete interaction
+        st.session_state.session_logger.log_interaction(
+            user_query=prompt,
+            final_prompt=final_query,
+            assistant_response=full_bot_message
+        )
+        st.session_state.messages.append({"role": "assistant", "content": full_bot_message})
+
+with tab_settings:
+    st.header("App-Steuerung")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if st.button("Neuer Chat", use_container_width=True):
+            print("\n[AKTION] 'Neuer Chat' geklickt. Chat-Verlauf wird zurückgesetzt.")
+            st.session_state.messages = []
+            st.rerun()
+    with col2:
+        st.button("Datenbank neu aufbauen", on_click=trigger_rebuild, use_container_width=True)
+    with col3:
+        st.button("App beenden", on_click=exit_app, type="primary", use_container_width=True)
+
+    st.divider()
+
+    st.header("Sitzungsprotokolle (Logs)")
+
+    log_files = SessionLogger.list_log_files()
+    if not log_files:
+        st.info("Es sind noch keine Log-Dateien vorhanden.")
+    else:
+        selected_logs = st.multiselect(
+            "Wählen Sie die zu löschenden Protokolle aus:",
+            options=log_files,
+            format_func=lambda path: path.name
+        )
+
+        col_del1, col_del2 = st.columns(2)
+        with col_del1:
+            if st.button("Ausgewählte Logs löschen", disabled=not selected_logs, use_container_width=True):
+                SessionLogger.delete_log_files(selected_logs)
+                st.success(f"{len(selected_logs)} Log(s) gelöscht.")
+                st.rerun()
+        with col_del2:
+            if st.button("Alle Logs löschen", type="primary", use_container_width=True):
+                SessionLogger.delete_log_files(log_files)
+                st.success("Alle Logs wurden gelöscht.")
+                st.rerun()
+
+        st.subheader("Alle Protokolle")
+        for log in log_files:
+            with st.expander(f"{log.name} ({os.path.getsize(log)} Bytes)"):
+                try:
+                    with open(log, "r", encoding="utf-8") as f:
+                        st.text(f.read())
+                except Exception as e:
+                    st.error(f"Konnte Log-Datei nicht lesen: {e}")
