@@ -7,13 +7,12 @@ def load_embedding_model(model_id: str, device: str) -> SentenceTransformer:
     """Loads a SentenceTransformer model onto a specified device."""
     print(f"Attempting to load embedding model '{model_id}' onto device '{device}'.")
     try:
-        model = SentenceTransformer(model_id)
-        model.to(device)
-        # Verify the model's device
-        actual_device = next(model.parameters()).device
-        print(f"Model '{model_id}' successfully loaded and moved to device '{actual_device}'.")
+        model = SentenceTransformer(model_id, device=device)
+        # Verify the model's device to confirm it loaded correctly
+        actual_device = model.device
+        print(f"Model '{model_id}' successfully loaded on device '{actual_device}'.")
         if str(actual_device) != device:
-            print(f"Warning: Model is on device '{actual_device}' but device '{device}' was requested.")
+            print(f"Warning: Model loaded on device '{actual_device}' but device '{device}' was requested.")
         return model
     except Exception as e:
         print(f"Error loading sentence embedding model '{model_id}': {e}")
@@ -63,7 +62,10 @@ def embed_chunks(
     if preloaded_model:
         print(f"Using pre-loaded embedding model for {len(chunks_data)} chunks.")
         model_to_use = preloaded_model
-        model_to_use.to(device) # Ensure the preloaded model is on the correct device
+        # Ensure the preloaded model is on the correct device
+        if str(model_to_use.device) != device:
+            model_to_use.to(device)
+            print(f"Moved pre-loaded model to device '{model_to_use.device}'.")
     else:
         print(f"No pre-loaded model provided, loading model '{model_id}' for {len(chunks_data)} chunks.")
         model_to_use = load_embedding_model(model_id=model_id, device=device)
