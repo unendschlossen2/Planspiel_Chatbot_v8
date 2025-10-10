@@ -1,18 +1,26 @@
 import torch
 
 def load_gpu():
+    """
+    Detects and returns the available processing device (CUDA, MPS, or CPU)
+    and a formatted string with the device name.
+    """
     if torch.cuda.is_available():
-        device_name = torch.cuda.get_device_name(0)
         device = torch.device("cuda")
-        if "AMD" in device_name or "Radeon" in device_name:
-            print(f"Verwende AMD ROCm GPU: {device_name}")
+        device_name = torch.cuda.get_device_name(0)
+        # Check for AMD/Radeon to correctly label ROCm, otherwise assume CUDA
+        if "AMD" in device_name.upper() or "RADEON" in device_name.upper():
+            display_name = f"ROCm: {device_name}"
         else:
-            print(f"Verwende CUDA GPU: {device_name}")
+            display_name = f"CUDA: {device_name}"
+        print(f"Using GPU: {display_name}")
     elif torch.backends.mps.is_available():
         device = torch.device("mps")
-        print("Verwende MPS GPU (Apple Silicon)")
+        display_name = "MPS (Apple Silicon)"
+        print(f"Using GPU: {display_name}")
     else:
         device = torch.device("cpu")
-        print("Verwende CPU - (Keine GPU erkannt)")
+        display_name = "CPU"
+        print("No GPU detected, using CPU.")
 
-    return device
+    return device, display_name

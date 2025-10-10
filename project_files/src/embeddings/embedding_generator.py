@@ -1,15 +1,22 @@
 from typing import List, Dict, Any, Optional
 from sentence_transformers import SentenceTransformer
 import numpy as np
+import torch
 
 def load_embedding_model(model_id: str, device: str) -> SentenceTransformer:
-    print(f"Lade Embedding-Modell '{model_id}' auf Gerät '{device}'.")
+    """Loads a SentenceTransformer model onto a specified device."""
+    print(f"Attempting to load embedding model '{model_id}' onto device '{device}'.")
     try:
-        model = SentenceTransformer(model_id, device=device)
-        print(f"Modell '{model_id}' erfolgreich geladen.")
+        model = SentenceTransformer(model_id)
+        model.to(device)
+        # Verify the model's device
+        actual_device = next(model.parameters()).device
+        print(f"Model '{model_id}' successfully loaded and moved to device '{actual_device}'.")
+        if str(actual_device) != device:
+            print(f"Warning: Model is on device '{actual_device}' but device '{device}' was requested.")
         return model
     except Exception as e:
-        print(f"Fehler beim Laden des Satz-Embedding-Modells '{model_id}': {e}")
+        print(f"Error loading sentence embedding model '{model_id}': {e}")
         raise
 
 def generate_embeddings_for_corpus(
@@ -19,11 +26,12 @@ def generate_embeddings_for_corpus(
         show_progress_bar: bool = True,
         normalize_embeddings: bool = True
 ) -> np.ndarray:
+    """Generates embeddings for a list of texts using the provided model."""
     if not text_corpus:
-        print("Textkorpus ist leer. Gebe leeres NumPy-Array für Embeddings zurück.")
+        print("Text corpus is empty. Returning empty NumPy array for embeddings.")
         return np.array([])
 
-    print(f"Generiere Embeddings für {len(text_corpus)} Dokumente (Batch-Größe: {batch_size}, Normalisierung: {normalize_embeddings})...")
+    print(f"Generating embeddings for {len(text_corpus)} documents (Batch size: {batch_size}, Normalization: {normalize_embeddings})...")
     try:
         embeddings = model.encode(
             text_corpus,
@@ -32,10 +40,10 @@ def generate_embeddings_for_corpus(
             normalize_embeddings=normalize_embeddings,
             convert_to_numpy=True
         )
-        print(f"{len(embeddings)} Embeddings erfolgreich generiert.")
+        print(f"{len(embeddings)} embeddings generated successfully.")
         return embeddings
     except Exception as e:
-        print(f"Fehler während der Embedding-Generierung: {e}")
+        print(f"Error during embedding generation: {e}")
         raise
 
 def embed_chunks(
@@ -46,28 +54,32 @@ def embed_chunks(
         normalize_embeddings: bool = True,
         preloaded_model: Optional[SentenceTransformer] = None
 ) -> List[Dict[str, Any]]:
+    """Embeds the content of chunks using a SentenceTransformer model."""
     if not chunks_data:
-        print("Leere Liste von Chunks empfangen. Keine Embeddings zu generieren.")
+        print("Received an empty list of chunks. No embeddings to generate.")
         return []
 
     model_to_use: SentenceTransformer
     if preloaded_model:
-        print(f"Verwende vorab geladenes Embedding-Modell für {len(chunks_data)} Chunks.")
+        print(f"Using pre-loaded embedding model for {len(chunks_data)} chunks.")
         model_to_use = preloaded_model
+        model_to_use.to(device) # Ensure the preloaded model is on the correct device
     else:
-        print(f"Kein vorab geladenes Modell bereitgestellt, lade Modell '{model_id}' für {len(chunks_data)} Chunks.")
+        print(f"No pre-loaded model provided, loading model '{model_id}' for {len(chunks_data)} chunks.")
         model_to_use = load_embedding_model(model_id=model_id, device=device)
 
+    # Map original chunk indices to texts that need embedding
     texts_to_embed_map = []
     for i, chunk in enumerate(chunks_data):
         content = chunk.get("content", "")
         if content.strip():
             texts_to_embed_map.append((i, content))
         else:
+            # Assign empty embedding for chunks with no content
             chunk['embedding'] = np.array([])
 
     if not texts_to_embed_map:
-        print("Alle Chunk-Inhalte sind nach der ersten Prüfung leer oder nur Whitespace. Keine Embeddings über leere Arrays hinaus generiert.")
+        print("All chunk contents are empty or whitespace. No embeddings generated.")
         return chunks_data
 
     original_indices = [item[0] for item in texts_to_embed_map]
@@ -81,13 +93,14 @@ def embed_chunks(
         normalize_embeddings=normalize_embeddings
     )
 
+    # Assign generated embeddings back to the original chunks
     for i, original_idx in enumerate(original_indices):
         if i < len(embeddings_array):
             chunks_data[original_idx]['embedding'] = embeddings_array[i]
         else:
             # This case should ideally not happen if logic is correct
-            print(f"Fehler: Nichtübereinstimmung in der Embedding-Anzahl für Chunk-Index {original_idx}. Weise leeres Embedding zu.")
+            print(f"Error: Mismatch in embedding count for chunk index {original_idx}. Assigning empty embedding.")
             chunks_data[original_idx]['embedding'] = np.array([])
 
-    print("Hinzufügen von Embeddings zu Chunk-Daten abgeschlossen.")
+    print("Finished adding embeddings to chunk data.")
     return chunks_data

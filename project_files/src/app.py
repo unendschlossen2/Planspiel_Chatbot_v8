@@ -5,7 +5,7 @@ import streamlit as st
 import time
 import re
 import os
-from typing import Set, List
+from typing import Set
 
 # --- Import all your project's modules ---
 from helper.settings import settings
@@ -28,17 +28,17 @@ from preprocessing.text_cleanup import normalize_markdown_whitespace
 
 @st.cache_resource
 def load_processing_device():
-    """Loads the processing device (GPU or CPU) only once."""
+    """Loads the processing device and its display name only once."""
     try:
-        device = str(load_gpu())
-        return device
+        device, device_name = load_gpu()
+        return str(device), device_name
     except RuntimeError as e:
         st.warning(f"GPU loading error: {e}. Switching to CPU.")
-        return "cpu"
+        return "cpu", "CPU"
 
 @st.cache_resource
 def setup_database_connection():
-    """Establishes the connection to the vector database."""
+    """Stellt die Verbindung zur Vektor-Datenbank her."""
     db_collection = create_and_populate_vector_store(
         chunks_with_embeddings=[],
         db_path=settings.database.persist_path,
@@ -49,25 +49,27 @@ def setup_database_connection():
 
 def rebuild_database_from_source_files(device: str):
     """
-    Executes the complete process of rebuilding the vector database from source files.
-    Uses the ModelManager to load the embedding model.
+    Führt den vollständigen Prozess zum Neuaufbau der Vektor-Datenbank aus den Quelldateien durch.
+    Nutzt den ModelManager, um das Embedding-Modell zu laden.
     """
-    st.info("Starting the vector database rebuild. This process may take a few minutes.")
+    st.info("Starte den Neuaufbau der Vektor-Datenbank. Dieser Vorgang kann einige Minuten dauern.")
 
-    with st.spinner("Step 1/4: Deleting old database collection..."):
+    # 1. Alte Kollektion löschen
+    with st.spinner("Schritt 1/4: Lösche alte Datenbank-Kollektion..."):
         create_and_populate_vector_store(
             chunks_with_embeddings=[],
             db_path=settings.database.persist_path,
             collection_name=settings.database.collection_name,
             force_rebuild_collection=True
         )
-        st.success("Step 1/4: Old database collection successfully deleted.")
+        st.success("Schritt 1/4: Alte Datenbank-Kollektion erfolgreich gelöscht.")
 
-    with st.spinner("Step 2/4: Loading and processing source files..."):
+    # 2. Quelldateien laden und verarbeiten
+    with st.spinner("Schritt 2/4: Lade und verarbeite Quelldateien..."):
         input_dir = os.path.join("project_files", "input_files")
         file_list = load_markdown_directory(input_dir)
         if not file_list:
-            st.error("No Markdown files found in the `input_files` directory. Aborting.")
+            st.error("Keine Markdown-Dateien im `input_files`-Verzeichnis gefunden. Abbruch.")
             return
 
         all_chunks = []
@@ -84,10 +86,11 @@ def rebuild_database_from_source_files(device: str):
                 min_chars_per_chunk=settings.processing.min_chars_per_chunk
             )
             all_chunks.extend(chunks)
-            progress_bar.progress((i + 1) / len(file_list), text=f"Processing: {file_item['source']}")
-        st.success(f"Step 2/4: Source files successfully processed. {len(all_chunks)} chunks created.")
+            progress_bar.progress((i + 1) / len(file_list), text=f"Verarbeite: {file_item['source']}")
+        st.success(f"Schritt 2/4: Quelldateien erfolgreich verarbeitet. {len(all_chunks)} Chunks erstellt.")
 
-    with st.spinner(f"Step 3/4: Generating embeddings for {len(all_chunks)} chunks..."):
+    # 3. Embeddings generieren
+    with st.spinner(f"Schritt 3/4: Generiere Embeddings für {len(all_chunks)} Chunks..."):
         embedding_model = st.session_state.model_manager.get_model("embedding")
         chunks_with_embeddings = embed_chunks(
             chunks_data=all_chunks,
@@ -96,17 +99,19 @@ def rebuild_database_from_source_files(device: str):
             preloaded_model=embedding_model,
             normalize_embeddings=True
         )
-        st.success("Step 3/4: Embeddings successfully generated.")
+        st.success("Schritt 3/4: Embeddings erfolgreich generiert.")
+        # Nach Gebrauch sofort entladen, da dies ein einmaliger Prozess ist
         st.session_state.model_manager.unload_model("embedding")
 
-    with st.spinner("Step 4/4: Populating the vector database with new data..."):
+    # 4. Datenbank füllen
+    with st.spinner("Schritt 4/4: Fülle die Vektor-Datenbank mit neuen Daten..."):
         create_and_populate_vector_store(
             chunks_with_embeddings=chunks_with_embeddings,
             db_path=settings.database.persist_path,
             collection_name=settings.database.collection_name,
-            force_rebuild_collection=False
+            force_rebuild_collection=False # Die Kollektion wurde bereits in Schritt 1 neu erstellt
         )
-        st.success("Step 4/4: Vector database successfully populated.")
+        st.success("Schritt 4/4: Vektor-Datenbank erfolgreich gefüllt.")
 
 # --- Main Chatbot Logic ---
 
@@ -120,21 +125,22 @@ def get_bot_response(
     enable_conversation_memory: bool
 ):
     """
-    Contains the complete RAG pipeline logic and uses the ModelManager
-    to load and unload models based on the selected VRAM strategy.
+    Enthält die vollständige RAG-Pipeline-Logik und nutzt den ModelManager,
+    um Modelle basierend auf der ausgewählten VRAM-Strategie zu laden und zu entladen.
     """
     model_manager = st.session_state.model_manager
     strategy = model_manager.get_vram_strategy()
+
     db_collection = setup_database_connection()
-
     if not db_collection:
-        return "Error: Database collection could not be loaded.", "", user_query
+        return "Fehler: Datenbank-Kollektion konnte nicht geladen werden.", "", user_query
 
-    last_query, last_response = (chat_history[-2]['content'], chat_history[-1]['content']) if len(chat_history) >= 2 and "no relevant information" not in chat_history[-1]['content'] else (None, None)
+    last_query, last_response = (chat_history[-2]['content'], chat_history[-1]['content']) if len(chat_history) >= 2 and "keine relevanten Informationen" not in chat_history[-1]['content'] else (None, None)
 
+    # --- Conversation Condensing ---
     condensed_query = user_query
     if enable_conversation_memory and last_query and last_response:
-        with st.spinner("🔄 Processing conversation context..."):
+        with st.spinner("🔄 Verarbeite Konversationskontext..."):
             condenser_model = model_manager.get_model("condenser")
             if condenser_model:
                 condensed_query = condense_conversation(
@@ -144,9 +150,10 @@ def get_bot_response(
                 )
             if strategy == "Aggressive": model_manager.unload_model("condenser")
 
+    # --- Query Expansion ---
     expanded_query = condensed_query
     if enable_query_expansion and len(condensed_query) < settings.pipeline.query_expansion_char_threshold:
-        with st.spinner("🔍 Expanding query..."):
+        with st.spinner("🔍 Erweitere Anfrage..."):
             expander_model = model_manager.get_model("expander")
             if expander_model:
                 expanded_query = expand_user_query(
@@ -156,18 +163,20 @@ def get_bot_response(
                 )
             if strategy == "Aggressive": model_manager.unload_model("expander")
 
-    with st.spinner(f"📚 Searching documents for: '{expanded_query}'..."):
+    # --- Retrieval ---
+    with st.spinner(f"📚 Suche in Dokumenten für: '{expanded_query}'..."):
         embedding_model = model_manager.get_model("embedding")
         if not embedding_model:
-             return "Error: Embedding model could not be loaded. Vector database build may have failed.", "", user_query
+             return "Fehler: Embedding-Modell konnte nicht geladen werden. Der Vektor-Datenbank-Aufbau ist möglicherweise fehlgeschlagen.", "", user_query
         query_embedding = embed_query(embedding_model, expanded_query)
         retrieved_docs = query_vector_store(db_collection, query_embedding, retrieval_top_k)
         if strategy in ["Aggressive", "Balanced"]:
             model_manager.unload_model("embedding")
 
+    # --- Reranking ---
     final_docs = retrieved_docs
     if use_reranker and retrieved_docs:
-        with st.spinner("⚖️ Re-ranking document relevance..."):
+        with st.spinner("⚖️ Bewerte Dokumenten-Relevanz neu..."):
             reranker_model = model_manager.get_model("reranker")
             if reranker_model:
                 final_docs = gap_based_rerank_and_filter(
@@ -179,11 +188,12 @@ def get_bot_response(
                 model_manager.unload_model("reranker")
 
     if not final_docs:
-        return "I could not find any relevant information for your query in the manual.", "", user_query
+        return "Ich konnte leider keine relevanten Informationen zu Ihrer Anfrage im Handbuch finden.", "", user_query
 
+    # --- Answer Generation ---
     generation_config = settings.models.llm_generation_config.copy()
     generation_config["temperature"] = temperature
-    with st.spinner("✍️ Generating answer..."):
+    with st.spinner("✍️ Generiere Antwort..."):
         llm_model = model_manager.get_model("llm")
         if llm_model:
             llm_answer_generator, citation_map = generate_llm_answer(
@@ -192,9 +202,10 @@ def get_bot_response(
             )
             raw_response = "".join([chunk for chunk in llm_answer_generator])
         else:
-            raw_response = "Error: The main response model could not be loaded."
+            raw_response = "Fehler: Das Haupt-Antwortmodell konnte nicht geladen werden."
             citation_map = {}
 
+        # In Balanced/Aggressive mode, unload all generative models after use
         if strategy != "Performance":
             model_manager.unload_model("llm")
             if enable_conversation_memory: model_manager.unload_model("condenser")
@@ -202,142 +213,100 @@ def get_bot_response(
 
     used_source_ids: Set[int] = set()
     citation_regex = re.compile(r'\[Source ID: (\d+)]')
+
     matches = citation_regex.finditer(raw_response)
     for match in matches:
         used_source_ids.add(int(match.group(1)))
+
     formatted_response = citation_regex.sub(r'[\1]', raw_response).strip()
 
     sources_text = ""
     if used_source_ids and citation_map:
-        sources_list = [f"- [{source_id}] **{citation_map[source_id]['filename']}**, Section: *{citation_map[source_id]['header']}*" for source_id in sorted(list(used_source_ids)) if source_id in citation_map]
+        sources_list = []
+        for source_id in sorted(list(used_source_ids)):
+            if source_id in citation_map:
+                info = citation_map[source_id]
+                sources_list.append(f"- [{source_id}] **{info['filename']}**, Abschnitt: *{info['header']}*")
         sources_text = "\n".join(sources_list)
 
+    # Gib die finale Anfrage zurück, damit sie geloggt werden kann
     return formatted_response, sources_text, expanded_query
 
-# --- App Initialization & State Management ---
+# --- Helper function for logging ---
+def log_app_state():
+    """Gibt den aktuellen Zustand der Anwendung in der Konsole aus."""
+    print("\n--- ANWENDUNGSZUSTAND ---")
+    try:
+        db_collection = setup_database_connection()
+        if db_collection:
+            print(f"Datenbank-Status: Kollektion '{db_collection.name}' geladen mit {db_collection.count()} Elementen.")
+        else:
+            print("Datenbank-Status: Kollektion nicht geladen.")
+    except Exception as e:
+        print(f"Datenbank-Status: Fehler beim Zugriff auf die DB - {e}")
 
-st.set_page_config(page_title="TOPSIM RAG Chatbot", page_icon="🤖", layout="wide")
+    print("\n[Konfiguration]")
+    print(f"  LLM: {settings.models.llm_model_id} ({settings.models.llm_model_path})")
+    print(f"  Reranker: {'Aktiv' if settings.pipeline.use_reranker else 'Inaktiv'}")
+    print(f"  Konversationsgedächtnis: {'Aktiv' if settings.pipeline.enable_conversation_memory else 'Inaktiv'}")
 
-# --- Callbacks ---
-def on_setting_change():
-    st.toast("Settings updated!", icon="✅")
+    print("\n[Session-Zustand]")
+    print(f"  Anzahl Nachrichten im Chat-Verlauf: {len(st.session_state.get('messages', []))}")
+    print("--- ENDE ZUSTAND ---\n")
 
-def on_vram_strategy_change():
-    strategy = st.session_state.vram_strategy
-    st.session_state.model_manager.set_vram_strategy(strategy)
-    st.toast(f"VRAM strategy changed to '{strategy}'. All models have been unloaded.", icon="🧠")
+# --- Streamlit UI ---
 
-def trigger_rebuild():
-    st.session_state.rebuild_triggered = True
-
-def exit_app():
-    print("\n[ACTION] 'Exit App' clicked. Terminating the process.")
-    os._exit(0)
-
-# --- Session State Initialization ---
-if "device" not in st.session_state:
-    st.session_state.device = load_processing_device()
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-if "rebuild_triggered" not in st.session_state:
-    st.session_state.rebuild_triggered = False
-if "session_logger" not in st.session_state:
-    st.session_state.session_logger = SessionLogger()
-if "model_manager" not in st.session_state:
-    st.session_state.model_manager = ModelManager(settings_models=settings.models, device=st.session_state.device)
-
-# --- UI and Pipeline Parameter Initialization ---
-VRAM_OPTIONS = ["Performance", "Balanced", "Aggressive"]
-if "vram_strategy" not in st.session_state:
-    st.session_state.vram_strategy = VRAM_OPTIONS[0]
-
-if "temperature" not in st.session_state:
-    st.session_state.temperature = settings.models.llm_generation_config.get("temperature", 0.2)
-if "retrieval_top_k" not in st.session_state:
-    st.session_state.retrieval_top_k = settings.pipeline.retrieval_top_k
-if "use_reranker" not in st.session_state:
-    st.session_state.use_reranker = settings.pipeline.use_reranker
-if "enable_query_expansion" not in st.session_state:
-    st.session_state.enable_query_expansion = settings.pipeline.enable_query_expansion
-if "enable_conversation_memory" not in st.session_state:
-    st.session_state.enable_conversation_memory = settings.pipeline.enable_conversation_memory
-
-# --- Database Initialization Check ---
-db_collection = setup_database_connection()
-if not db_collection or st.session_state.rebuild_triggered:
-    if not db_collection:
-        st.warning("No existing database found. Starting the initial build...")
-    elif st.session_state.rebuild_triggered:
-        st.info("Manual database rebuild has been triggered...")
-
-    st.cache_resource.clear()
-    st.session_state.model_manager.unload_all_models()
-    rebuild_database_from_source_files(st.session_state.device)
-    st.session_state.rebuild_triggered = False
-    st.success("Database successfully (re)built! The page will now reload.")
-    time.sleep(3)
-    st.rerun()
-
-
-# --- UI LAYOUT ---
-
-# --- Left Sidebar ---
-with st.sidebar:
-    st.title("⚙️ Generation Parameters")
-    st.slider(
-        "LLM Temperature", min_value=0.0, max_value=1.0,
-        value=st.session_state.temperature,
-        key="temperature", step=0.05,
-        on_change=on_setting_change,
-        help="Controls the randomness of the model's output."
-    )
-    st.slider(
-        "Retrieval Top-K", min_value=1, max_value=20,
-        value=st.session_state.retrieval_top_k,
-        key="retrieval_top_k", step=1,
-        on_change=on_setting_change,
-        help="Number of initial documents to retrieve."
-    )
-    st.toggle("Use Reranker", value=st.session_state.use_reranker, key="use_reranker", on_change=on_setting_change)
-    st.toggle("Enable Query Expansion", value=st.session_state.enable_query_expansion, key="enable_query_expansion", on_change=on_setting_change)
-    st.toggle("Enable Conversation Memory", value=st.session_state.enable_conversation_memory, key="enable_conversation_memory", on_change=on_setting_change)
-
-    st.divider()
-
-    st.title("📦 Model Status")
-    st.radio(
-        "VRAM Management Strategy:", VRAM_OPTIONS,
-        key="vram_strategy",
-        on_change=on_vram_strategy_change,
-        index=VRAM_OPTIONS.index(st.session_state.vram_strategy),
-        help=(
-            "- **Performance:** Keeps all models in memory.\n"
-            "- **Balanced:** Groups and unloads models when not needed.\n"
-            "- **Aggressive:** Unloads each model immediately after use."
-        )
-    )
-    # Display Model Status Metrics
-    status = st.session_state.model_manager.get_loaded_models_status()
-    for model_name, is_loaded in status.items():
-        st.metric(
-            label=model_name.capitalize(),
-            value="Loaded" if is_loaded else "Unloaded",
-            delta="Active" if is_loaded else "Inactive",
-            delta_color="normal" if is_loaded else "off"
-        )
-
-
-# --- Main Content Area (3 Columns) ---
-main_col, right_sidebar = st.columns([2, 1])
-
-with main_col:
+def chat_page():
+    """Renders the main chat page."""
     st.title("🤖 TOPSIM RAG Chatbot")
-    # Chat Interface
+
+    def on_setting_change():
+        st.toast("Settings updated!", icon="✅")
+
+    with st.expander("⚙️ Generation Parameters"):
+        st.slider(
+            "LLM Temperature", min_value=0.0, max_value=1.0,
+            value=st.session_state.temperature,
+            key="temperature", step=0.05,
+            help="Controls the randomness of the model's output. Lower values make it more deterministic.",
+            on_change=on_setting_change
+        )
+        st.slider(
+            "Retrieval Top-K", min_value=1, max_value=20,
+            value=st.session_state.retrieval_top_k,
+            key="retrieval_top_k", step=1,
+            help="Number of initial documents to retrieve from the vector store.",
+            on_change=on_setting_change
+        )
+        st.toggle(
+            "Use Reranker",
+            value=st.session_state.use_reranker,
+            key="use_reranker",
+            help="Enable or disable the reranking step to improve document relevance.",
+            on_change=on_setting_change
+        )
+        st.toggle(
+            "Enable Query Expansion",
+            value=st.session_state.enable_query_expansion,
+            key="enable_query_expansion",
+            help="Automatically expand short queries to improve retrieval.",
+            on_change=on_setting_change
+        )
+        st.toggle(
+            "Enable Conversation Memory",
+            value=st.session_state.enable_conversation_memory,
+            key="enable_conversation_memory",
+            help="Allow the chatbot to remember the context of the last interaction.",
+            on_change=on_setting_change
+        )
+
+    # Main chat interface
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
     if prompt := st.chat_input("Ask your question to the TOPSIM manual..."):
+        print(f"\n[USER INPUT] Received new query: '{prompt}'")
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
@@ -373,37 +342,154 @@ with main_col:
         )
         st.session_state.messages.append({"role": "assistant", "content": full_bot_message})
 
-with right_sidebar:
-    st.title("📋 Logs & Controls")
+def settings_page():
+    """Renders the settings and administration page."""
+    st.title("⚙️ Settings & Administration")
 
-    # App Control Buttons
-    st.button("New Chat", on_click=lambda: st.session_state.update(messages=[]), use_container_width=True)
-    st.button("Rebuild Database", on_click=trigger_rebuild, use_container_width=True)
-    st.button("End App", on_click=exit_app, type="primary", use_container_width=True)
+    st.header("App Controls")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if st.button("New Chat", use_container_width=True):
+            print("\n[ACTION] 'New Chat' clicked. Resetting chat history.")
+            st.session_state.messages = []
+            st.rerun()
+    with col2:
+        st.button("Rebuild Database", on_click=trigger_rebuild, use_container_width=True)
+    with col3:
+        st.button("Exit App", on_click=exit_app, type="primary", use_container_width=True)
 
     st.divider()
 
-    # Session Logs
-    log_files = SessionLogger.list_log_files()
-    if not log_files:
-        st.info("No log files found.")
-    else:
-        with st.expander("View Session Logs", expanded=True):
-            selected_logs = st.multiselect(
-                "Select logs to delete:",
-                options=log_files,
-                format_func=lambda path: path.name,
+    st.header("VRAM Management Strategy")
+
+    def on_vram_strategy_change():
+        st.session_state.model_manager.set_vram_strategy(st.session_state.vram_strategy)
+        st.toast(f"VRAM strategy changed to '{st.session_state.vram_strategy}'. All models unloaded.", icon="🧠")
+
+    vram_options = ["Performance", "Balanced", "Aggressive"]
+    st.radio(
+        "Select a strategy:",
+        vram_options,
+        key="vram_strategy",
+        index=vram_options.index(st.session_state.vram_strategy),
+        on_change=on_vram_strategy_change,
+        help=(
+            "- **Performance:** Loads all models on first use and keeps them in memory.\n"
+            "- **Balanced:** Groups models (Retrieval/Generation) and unloads them when no longer needed.\n"
+            "- **Aggressive:** Loads each model only for its specific task and unloads it immediately."
+        )
+    )
+
+    st.divider()
+
+    st.header("Device & Model Status")
+    st.info(f"**Processing Device:** {st.session_state.device_name}")
+    status = st.session_state.model_manager.get_loaded_models_status()
+    cols = st.columns(len(status))
+    for i, (model_name, is_loaded) in enumerate(status.items()):
+        with cols[i]:
+            st.metric(
+                label=model_name.capitalize(),
+                value="Loaded" if is_loaded else "Unloaded",
+                delta="Active" if is_loaded else "Inactive",
+                delta_color="normal" if is_loaded else "off"
             )
 
+    st.divider()
+
+    st.header("Session Logs")
+    log_files = SessionLogger.list_log_files()
+    if not log_files:
+        st.info("No log files available yet.")
+    else:
+        selected_logs = st.multiselect(
+            "Select logs to delete:",
+            options=log_files,
+            format_func=lambda path: path.name,
+            key="log_multiselect"
+        )
+
+        col_del1, col_del2 = st.columns(2)
+        with col_del1:
             if st.button("Delete Selected Logs", disabled=not selected_logs, use_container_width=True):
                 SessionLogger.delete_log_files(selected_logs)
                 st.success(f"{len(selected_logs)} log(s) deleted.")
                 st.rerun()
+        with col_del2:
+            if st.button("Delete All Logs", type="primary", use_container_width=True):
+                SessionLogger.delete_log_files(log_files)
+                st.success("All logs have been deleted.")
+                st.rerun()
 
-            for log in log_files:
-                with st.expander(f"{log.name} ({os.path.getsize(log)} Bytes)"):
-                    try:
-                        with open(log, "r", encoding="utf-8") as f:
-                            st.text(f.read())
-                    except Exception as e:
-                        st.error(f"Could not read log file: {e}")
+        # Removed the subheader here to prevent nesting issues
+        for log in log_files:
+            with st.expander(f"{log.name} ({os.path.getsize(log)} Bytes)"):
+                try:
+                    with open(log, "r", encoding="utf-8") as f:
+                        st.text(f.read())
+                except Exception as e:
+                    st.error(f"Could not read log file: {e}")
+
+# --- App Initialization & Main Page Rendering ---
+
+st.set_page_config(page_title="TOPSIM RAG Chatbot", page_icon="🤖", layout="wide")
+
+# Initialization in Session State
+if "device" not in st.session_state:
+    st.session_state.device, st.session_state.device_name = load_processing_device()
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "rebuild_triggered" not in st.session_state:
+    st.session_state.rebuild_triggered = False
+if "session_logger" not in st.session_state:
+    st.session_state.session_logger = SessionLogger()
+if "model_manager" not in st.session_state:
+    st.session_state.model_manager = ModelManager(settings_models=settings.models, device=st.session_state.device)
+if "vram_strategy" not in st.session_state:
+    st.session_state.vram_strategy = "Performance" # Default
+
+# Initialization for UI-controlled pipeline parameters
+if "temperature" not in st.session_state:
+    st.session_state.temperature = settings.models.llm_generation_config.get("temperature", 0.2)
+if "retrieval_top_k" not in st.session_state:
+    st.session_state.retrieval_top_k = settings.pipeline.retrieval_top_k
+if "use_reranker" not in st.session_state:
+    st.session_state.use_reranker = settings.pipeline.use_reranker
+if "enable_query_expansion" not in st.session_state:
+    st.session_state.enable_query_expansion = settings.pipeline.enable_query_expansion
+if "enable_conversation_memory" not in st.session_state:
+    st.session_state.enable_conversation_memory = settings.pipeline.enable_conversation_memory
+
+def trigger_rebuild():
+    st.session_state.rebuild_triggered = True
+
+def exit_app():
+    print("\n[ACTION] 'Exit App' clicked. Terminating the process.")
+    os._exit(0)
+
+# Check if the database exists or if a rebuild is forced
+db_collection = setup_database_connection()
+if not db_collection or st.session_state.rebuild_triggered:
+    if not db_collection:
+        st.warning("No existing database found. Starting the initial build...")
+    elif st.session_state.rebuild_triggered:
+        st.info("Manual database rebuild has been triggered...")
+
+    st.cache_resource.clear()
+    st.session_state.model_manager.unload_all_models() # Ensure a clean slate before rebuild
+    rebuild_database_from_source_files(st.session_state.device)
+    st.session_state.rebuild_triggered = False
+    st.success("Database successfully (re)built! The page will now reload.")
+    time.sleep(3)
+    st.rerun()
+
+# Page navigation in the sidebar
+with st.sidebar:
+    st.title("Navigation")
+    page = st.radio("Select a page:", ["Chat", "Settings"], key="navigation_radio")
+
+# Render the selected page
+if page == "Chat":
+    chat_page()
+elif page == "Settings":
+    settings_page()
