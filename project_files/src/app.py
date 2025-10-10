@@ -110,6 +110,8 @@ def rebuild_database_from_source_files(device: str):
 
 # --- Main Chatbot Logic ---
 
+from typing import Generator, Tuple
+
 def get_bot_response(
     user_query: str,
     chat_history: list,
@@ -118,23 +120,26 @@ def get_bot_response(
     retrieval_top_k: int,
     enable_query_expansion: bool,
     enable_conversation_memory: bool
-):
+) -> Tuple[Generator[str, None, None], dict, str]:
     """
-    Contains the complete RAG pipeline logic and uses the ModelManager
-    to load and unload models based on the selected VRAM strategy.
+    Contains the complete RAG pipeline logic, returning a generator for streaming.
+    Model unloading is handled by the caller in a `finally` block.
     """
     model_manager = st.session_state.model_manager
     strategy = model_manager.get_vram_strategy()
     db_collection = setup_database_connection()
 
+    def error_generator(message: str):
+        yield message
+
     if not db_collection:
-        return "Error: Database collection could not be loaded.", "", user_query
+        return error_generator("Error: Database collection could not be loaded."), {}, user_query
 
     last_query, last_response = (chat_history[-2]['content'], chat_history[-1]['content']) if len(chat_history) >= 2 and "no relevant information" not in chat_history[-1]['content'] else (None, None)
 
     condensed_query = user_query
     if enable_conversation_memory and last_query and last_response:
-        with st.spinner("🔄 Processing conversation context..."):
+        with st.spinner("🔄 Verarbeite Konversationskontext..."):
             condenser_model = model_manager.get_model("condenser")
             if condenser_model:
                 condensed_query = condense_conversation(
@@ -142,11 +147,12 @@ def get_bot_response(
                     condenser_model=condenser_model,
                     condenser_generation_config=settings.models.condenser_generation_config,
                 )
-            if strategy == "Aggressive": model_manager.unload_model("condenser")
+            if strategy == "Aggressive":
+                model_manager.unload_model("condenser")
 
     expanded_query = condensed_query
     if enable_query_expansion and len(condensed_query) < settings.pipeline.query_expansion_char_threshold:
-        with st.spinner("🔍 Expanding query..."):
+        with st.spinner("🔍 Erweitere Anfrage..."):
             expander_model = model_manager.get_model("expander")
             if expander_model:
                 expanded_query = expand_user_query(
@@ -154,12 +160,13 @@ def get_bot_response(
                     expander_model=expander_model,
                     query_expander_generation_config=settings.models.query_expander_generation_config,
                 )
-            if strategy == "Aggressive": model_manager.unload_model("expander")
+            if strategy == "Aggressive":
+                model_manager.unload_model("expander")
 
-    with st.spinner(f"📚 Searching documents for: '{expanded_query}'..."):
+    with st.spinner(f"📚 Suche in Dokumenten für: '{expanded_query}'..."):
         embedding_model = model_manager.get_model("embedding")
         if not embedding_model:
-             return "Error: Embedding model could not be loaded. Vector database build may have failed.", "", user_query
+            return error_generator("Error: Embedding model could not be loaded."), {}, user_query
         query_embedding = embed_query(embedding_model, expanded_query)
         retrieved_docs = query_vector_store(db_collection, query_embedding, retrieval_top_k)
         if strategy in ["Aggressive", "Balanced"]:
@@ -167,7 +174,7 @@ def get_bot_response(
 
     final_docs = retrieved_docs
     if use_reranker and retrieved_docs:
-        with st.spinner("⚖️ Re-ranking document relevance..."):
+        with st.spinner("⚖️ Bewerte Dokumenten-Relevanz neu..."):
             reranker_model = model_manager.get_model("reranker")
             if reranker_model:
                 final_docs = gap_based_rerank_and_filter(
@@ -179,40 +186,21 @@ def get_bot_response(
                 model_manager.unload_model("reranker")
 
     if not final_docs:
-        return "I could not find any relevant information for your query in the manual.", "", user_query
+        return error_generator("Ich konnte leider keine relevanten Informationen zu Ihrer Anfrage im Handbuch finden."), {}, user_query
 
     generation_config = settings.models.llm_generation_config.copy()
     generation_config["temperature"] = temperature
-    with st.spinner("✍️ Generating answer..."):
+    with st.spinner("✍️ Generiere Antwort..."):
         llm_model = model_manager.get_model("llm")
-        if llm_model:
-            llm_answer_generator, citation_map = generate_llm_answer(
-                user_query=condensed_query, retrieved_chunks=final_docs, llm_model=llm_model,
-                llm_generation_config=generation_config
-            )
-            raw_response = "".join([chunk for chunk in llm_answer_generator])
-        else:
-            raw_response = "Error: The main response model could not be loaded."
-            citation_map = {}
+        if not llm_model:
+            return error_generator("Error: The main response model could not be loaded."), {}, user_query
 
-        if strategy != "Performance":
-            model_manager.unload_model("llm")
-            if enable_conversation_memory: model_manager.unload_model("condenser")
-            if enable_query_expansion: model_manager.unload_model("expander")
+        llm_answer_generator, citation_map = generate_llm_answer(
+            user_query=condensed_query, retrieved_chunks=final_docs, llm_model=llm_model,
+            llm_generation_config=generation_config
+        )
 
-    used_source_ids: Set[int] = set()
-    citation_regex = re.compile(r'\[Source ID: (\d+)]')
-    matches = citation_regex.finditer(raw_response)
-    for match in matches:
-        used_source_ids.add(int(match.group(1)))
-    formatted_response = citation_regex.sub(r'[\1]', raw_response).strip()
-
-    sources_text = ""
-    if used_source_ids and citation_map:
-        sources_list = [f"- [{source_id}] **{citation_map[source_id]['filename']}**, Section: *{citation_map[source_id]['header']}*" for source_id in sorted(list(used_source_ids)) if source_id in citation_map]
-        sources_text = "\n".join(sources_list)
-
-    return formatted_response, sources_text, expanded_query
+    return llm_answer_generator, citation_map, expanded_query
 
 # --- App Initialization & State Management ---
 
@@ -353,29 +341,58 @@ with main_col:
             st.markdown(prompt)
 
         with st.chat_message("assistant"):
-            response_text, sources, final_query = get_bot_response(
-                user_query=prompt,
-                chat_history=st.session_state.messages,
-                temperature=st.session_state.temperature,
-                use_reranker=st.session_state.use_reranker,
-                retrieval_top_k=st.session_state.retrieval_top_k,
-                enable_query_expansion=st.session_state.enable_query_expansion,
-                enable_conversation_memory=st.session_state.enable_conversation_memory,
-            )
+            response_generator = None
+            sources_text = ""
+            response_text = ""
+            try:
+                response_generator, citation_map, final_query = get_bot_response(
+                    user_query=prompt,
+                    chat_history=st.session_state.messages,
+                    temperature=st.session_state.temperature,
+                    use_reranker=st.session_state.use_reranker,
+                    retrieval_top_k=st.session_state.retrieval_top_k,
+                    enable_query_expansion=st.session_state.enable_query_expansion,
+                    enable_conversation_memory=st.session_state.enable_conversation_memory,
+                )
 
-            placeholder = st.empty()
-            full_response = ""
-            for char in response_text:
-                full_response += char
-                placeholder.markdown(full_response + "▌")
-                time.sleep(0.01)
-            placeholder.markdown(full_response)
+                placeholder = st.empty()
+                full_response = ""
+                for char in response_generator:
+                    full_response += char
+                    placeholder.markdown(full_response + "▌")
+                    time.sleep(0.01)
+                placeholder.markdown(full_response)
 
-            if sources:
-                with st.expander("**Quellen**"):
-                    st.markdown(sources)
+                # Format and display sources from the now-complete response
+                citation_regex = re.compile(r'\[Source ID: (\d+)]')
+                used_source_ids = {int(m.group(1)) for m in citation_regex.finditer(full_response)}
+                response_text = citation_regex.sub(r'[\1]', full_response).strip()
 
-        full_bot_message = response_text + (f"\n\n**Quellen**\n\n{sources}" if sources else "")
+                if used_source_ids and citation_map:
+                    sources_list = [f"- [{source_id}] **{citation_map[source_id]['filename']}**, Abschnitt: *{citation_map[source_id]['header']}*" for source_id in sorted(list(used_source_ids)) if source_id in citation_map]
+                    sources_text = "\n".join(sources_list)
+
+                if sources_text:
+                    with st.expander("**Quellen**"):
+                        st.markdown(sources_text)
+
+            finally:
+                # Ensure the generator is explicitly deleted to break reference cycles
+                if response_generator:
+                    del response_generator
+
+                # This block ensures that model unloading is attempted even if an error occurs.
+                model_manager = st.session_state.model_manager
+                strategy = model_manager.get_vram_strategy()
+                if strategy != "Performance":
+                    print("Unloading generative models after response completion...")
+                    model_manager.unload_model("llm")
+                    if st.session_state.enable_conversation_memory:
+                        model_manager.unload_model("condenser")
+                    if st.session_state.enable_query_expansion:
+                        model_manager.unload_model("expander")
+
+        full_bot_message = response_text + (f"\n\n**Quellen**\n\n{sources_text}" if sources_text else "")
         st.session_state.session_logger.log_interaction(
             user_query=prompt,
             final_prompt=final_query,

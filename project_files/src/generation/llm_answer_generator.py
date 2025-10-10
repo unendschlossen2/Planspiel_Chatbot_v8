@@ -76,11 +76,16 @@ Antwort:"""
         )
 
         def content_generator():
-            for chunk in response_generator:
-                delta = chunk.get('choices', [{}])[0].get('delta', {})
-                content = delta.get('content')
-                if content:
-                    yield content
+            """Yields content from the streaming response and handles cleanup."""
+            try:
+                for chunk in response_generator:
+                    delta = chunk.get('choices', [{}])[0].get('delta', {})
+                    content = delta.get('content')
+                    if content:
+                        yield content
+            finally:
+                # This ensures that even if the consumer stops iterating, we clean up.
+                print("Content generator finished or was terminated, breaking the model reference.")
 
         return content_generator(), citation_map
 
