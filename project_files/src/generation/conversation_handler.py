@@ -4,36 +4,12 @@ import streamlit as st
 import os
 from helper.file_loader import load_prompt_template
 
-# --- Model Caching ---
-@st.cache_resource
-def load_condenser_model(model_path: str, generation_config: Dict[str, Any]):
-    """
-    Lädt das Llama.cpp Modell für den Konversations-Verdichter und speichert es im Cache.
-    """
-    if not os.path.exists(model_path):
-        st.warning(f"Condenser-Modelldatei nicht gefunden unter: {model_path}. Konversationsgedächtnis wird deaktiviert.")
-        return None
-    try:
-        print(f"Lade Condenser-LLM von: {model_path}")
-        llm = Llama(
-            model_path=model_path,
-            n_ctx=generation_config.get("n_ctx", 2048),
-            n_gpu_layers=generation_config.get("n_gpu_layers", -1),
-            verbose=generation_config.get("verbose", False),
-            logits_all=True # Notwendig für manche Modelle, um Logits zu erzeugen
-        )
-        print("Condenser-LLM erfolgreich geladen.")
-        return llm
-    except Exception as e:
-        st.error(f"Fehler beim Laden des Condenser-LLM: {e}")
-        return None
-
 # --- Hauptfunktion ---
 def condense_conversation(
         last_query: Optional[str],
         last_response: Optional[str],
         new_query: str,
-        condenser_model_path: str,
+        condenser_model: Llama,
         condenser_generation_config: Dict[str, Any]
 ) -> str:
     """
@@ -45,9 +21,7 @@ def condense_conversation(
 
     print("Analysiere Konversationsverlauf auf Folgefragen...")
 
-    # Lade das Condenser-Modell aus dem Cache
-    condenser_llm = load_condenser_model(condenser_model_path, condenser_generation_config)
-    if condenser_llm is None:
+    if condenser_model is None:
         print("Condenser-Modell nicht verfügbar, überspringe Verdichtung.")
         return new_query
 
@@ -66,7 +40,7 @@ def condense_conversation(
             "max_tokens": condenser_generation_config.get("max_tokens", 256),
         }
 
-        response = condenser_llm.create_chat_completion(
+        response = condenser_model.create_chat_completion(
             messages=[
                 {"role": "system", "content": "Formuliere die Konversation in eine eigenständige Suchanfrage um."},
                 {"role": "user", "content": prompt}

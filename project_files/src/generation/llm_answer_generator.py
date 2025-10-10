@@ -4,30 +4,6 @@ import streamlit as st
 import os
 from helper.file_loader import load_prompt_template
 
-# --- Model Caching ---
-@st.cache_resource
-def load_llm_model(model_path: str, generation_config: Dict[str, Any]):
-    """
-    Lädt das Llama.cpp Modell und speichert es im Streamlit Cache.
-    """
-    if not os.path.exists(model_path):
-        st.error(f"Modelldatei nicht gefunden unter: {model_path}")
-        return None
-    try:
-        print(f"Lade lokales LLM von: {model_path}")
-        # Wichtige Parameter aus der Config extrahieren
-        llm = Llama(
-            model_path=model_path,
-            n_ctx=generation_config.get("n_ctx", 4096),
-            n_gpu_layers=generation_config.get("n_gpu_layers", -1), # -1 für maximale GPU-Auslagerung
-            verbose=generation_config.get("verbose", False)
-        )
-        print("Lokales LLM erfolgreich geladen.")
-        return llm
-    except Exception as e:
-        st.error(f"Fehler beim Laden des lokalen LLM: {e}")
-        return None
-
 # --- Unveränderte Hilfsfunktion ---
 def format_retrieved_context(retrieved_chunks: List[Dict[str, Any]]) -> Tuple[str, Dict[int, Dict[str, str]]]:
     if not retrieved_chunks:
@@ -55,7 +31,7 @@ def format_retrieved_context(retrieved_chunks: List[Dict[str, Any]]) -> Tuple[st
 def generate_llm_answer(
         user_query: str,
         retrieved_chunks: List[Dict[str, Any]],
-        llm_model_path: str,
+        llm_model: Llama,
         llm_generation_config: Dict[str, Any],
         prompt_template_str: Optional[str] = None
 ) -> Tuple[Generator[str, None, None], Dict[int, Dict[str, str]]]:
@@ -77,12 +53,9 @@ Benutzerfrage:
 Antwort:"""
     full_user_prompt = user_prompt_template.format(context=formatted_context, query=user_query)
 
-    # Lade das Modell aus dem Cache (oder erstelle es, falls es nicht vorhanden ist)
-    llm = load_llm_model(llm_model_path, llm_generation_config)
-
-    if llm is None:
+    if llm_model is None:
         def error_generator():
-            yield "Fehler: Das Sprachmodell konnte nicht geladen werden. Bitte überprüfen Sie den Pfad und die Konfiguration."
+            yield "Fehler: Das Haupt-Sprachmodell wurde nicht korrekt übergeben."
         return error_generator(), {}
 
     try:
@@ -93,7 +66,7 @@ Antwort:"""
             "max_tokens": llm_generation_config.get("max_tokens", 2048),
         }
 
-        response_generator = llm.create_chat_completion(
+        response_generator = llm_model.create_chat_completion(
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": full_user_prompt}

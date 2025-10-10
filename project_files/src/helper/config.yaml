@@ -58,7 +58,3 @@ pipeline:
   min_chunks_for_gap_detection: 4
   gap_detection_factor: 0.25
   small_epsilon: 0.00001
-
-# --- System und Performance ---
-system:
-  low_vram_mode: true

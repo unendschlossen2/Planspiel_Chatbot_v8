@@ -38,15 +38,11 @@ class PipelineSettings(BaseModel):
     gap_detection_factor: float
     small_epsilon: float
 
-class SystemSettings(BaseModel):
-    low_vram_mode: bool
-
 class AppSettings(BaseModel):
     models: ModelSettings
     database: DatabaseSettings
     processing: ProcessingSettings
     pipeline: PipelineSettings
-    system: SystemSettings
 
 # --- Simplified Loading Function ---
 def load_settings_from_any_path(paths: list) -> AppSettings:
