@@ -106,3 +106,25 @@ def embed_chunks(
 
     print("Finished adding embeddings to chunk data.")
     return chunks_data
+
+
+def embed_query(model: SentenceTransformer, query_text: str) -> np.ndarray:
+    """Generates an embedding for a single query text."""
+    return model.encode(
+        query_text,
+        normalize_embeddings=True,
+        convert_to_numpy=True
+    )
+
+
+def unload_embedding_model(model: SentenceTransformer):
+    """Unloads the SentenceTransformer model and clears VRAM."""
+    print(f"Unloading embedding model from device '{model.device}'...")
+    # Move model to CPU before deleting to ensure CUDA memory is released
+    model.to('cpu')
+    del model
+    # Clear CUDA cache and run garbage collection
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    gc.collect()
+    print("Embedding model unloaded and memory cleared.")

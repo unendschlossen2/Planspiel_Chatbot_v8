@@ -145,3 +145,22 @@ def gap_based_rerank_and_filter(
 
     print(f"Filterungsergebnis: Wähle die Top {final_num_to_take} Dokumente aus der potenziell relevanten Liste aus.")
     return potentially_relevant_docs[:final_num_to_take]
+
+
+def unload_reranker_model(model: CrossEncoder):
+    """Unloads the CrossEncoder model and clears VRAM."""
+    print(f"Unloading reranker model...")
+    # CrossEncoder doesn't have a direct device attribute like SentenceTransformer,
+    # but moving to CPU before deletion is a good practice if it's a torch.nn.Module.
+    # The implementation details of CrossEncoder might vary, but this is a safe approach.
+    try:
+        model.model.to('cpu')
+    except AttributeError:
+        print("Could not move model to CPU, proceeding with deletion.")
+
+    del model
+    # Clear CUDA cache and run garbage collection
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    gc.collect()
+    print("Reranker model unloaded and memory cleared.")

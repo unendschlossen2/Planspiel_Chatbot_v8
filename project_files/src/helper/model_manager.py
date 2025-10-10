@@ -4,13 +4,13 @@ import gc
 import torch
 import weakref
 from typing import Dict, Any, Literal
-from llama_cpp import Llama
+from llama_cpp import Llama, llama_free, llama_free_model
 
 # Import model loading functions from their original modules
 # This helps keep the loading logic with the component that uses it,
 # while the manager just orchestrates the loading/unloading.
-from embeddings.embedding_generator import load_embedding_model
-from retrieval.reranker import load_reranker_model
+from embeddings.embedding_generator import load_embedding_model, unload_embedding_model
+from retrieval.reranker import load_reranker_model, unload_reranker_model
 
 # A type hint for the different models we'll be managing
 ModelType = Literal["embedding", "reranker", "llm", "condenser", "expander"]
@@ -100,31 +100,47 @@ class ModelManager:
 
     def unload_model(self, model_type: ModelType):
         """Unloads a specific model, frees up VRAM, and confirms garbage collection."""
-        if model_type in self.loaded_models:
-            print(f"Attempting to unload '{model_type}' model...")
-            model_instance = self.loaded_models.pop(model_type, None)
+        if model_type not in self.loaded_models:
+            # print(f"Model '{model_type}' is not loaded, skipping unload.")
+            return
 
-            if model_instance is None:
-                print(f"Model '{model_type}' was already unloaded or not in manager.")
-                return
+        print(f"Attempting to unload '{model_type}' model...")
+        model_instance = self.loaded_models.pop(model_type, None)
 
-            # Create a weak reference to check for garbage collection
-            model_ref = weakref.ref(model_instance)
+        if model_instance is None:
+            print(f"Model '{model_type}' was already unloaded or not in manager.")
+            return
+
+        # Use the specific unloading function for sentence-transformer models
+        if model_type == "embedding":
+            unload_embedding_model(model_instance)
+            return
+        elif model_type == "reranker":
+            unload_reranker_model(model_instance)
+            return
+
+        # For Llama.cpp models, use the specific llama_free functions
+        if isinstance(model_instance, Llama):
+            print(f"Unloading Llama.cpp model '{model_type}'...")
+            # These functions are designed to release the C-level resources
+            # held by the llama.cpp backend.
+            if model_instance.model:
+                llama_free_model(model_instance.model)
+            if model_instance.ctx:
+                llama_free(model_instance.ctx)
             del model_instance
-
-            # Manually trigger garbage collection and clear CUDA cache
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+            print(f"Llama.cpp model '{model_type}' unloaded.")
+            return
 
-            if model_ref() is None:
-                print(f"Successfully garbage collected and unloaded '{model_type}' model.")
-            else:
-                st.warning(
-                    f"Failed to unload '{model_type}' model completely. "
-                    "There might be other references to it preventing memory release."
-                )
-                print(f"WARNING: Failed to garbage collect '{model_type}' model. Other references may exist.")
+        # Fallback for any other model types, though the above should cover all.
+        print(f"Warning: No specific unload logic for model type '{model_type}'. Using generic unload.")
+        del model_instance
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     def unload_all_models(self):
         """Unloads all currently loaded models."""
