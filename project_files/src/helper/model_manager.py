@@ -2,6 +2,7 @@ import streamlit as st
 import os
 import gc
 import torch
+import weakref
 from typing import Dict, Any, Literal
 from llama_cpp import Llama
 
@@ -66,14 +67,29 @@ class ModelManager:
             self.loaded_models[model_type] = None # Mark as failed to avoid retrying
 
     def _load_llama_cpp_model(self, model_path: str, gen_config: Dict[str, Any]) -> Llama:
-        """Helper to load any Llama.cpp model."""
+        """Helper to load any Llama.cpp model with detailed diagnostics."""
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Model file not found at: {model_path}")
+
+        n_gpu_layers = gen_config.get("n_gpu_layers", -1)
+
+        # If GPU layers are requested but no GPU is detected, warn the user.
+        if n_gpu_layers != 0 and self.device == "cpu":
+            st.warning(
+                f"Attempting to load model '{os.path.basename(model_path)}' with n_gpu_layers={n_gpu_layers} but no GPU was detected. "
+                "The model will run on CPU. Please check your PyTorch and CUDA/ROCm installation."
+            )
+            # Force n_gpu_layers to 0 to prevent errors.
+            n_gpu_layers = 0
+
+        # Force verbose=True to print detailed logs from llama.cpp backend for diagnostics.
+        print(f"Initializing Llama.cpp model at '{model_path}' with n_gpu_layers={n_gpu_layers} and verbose=True for diagnostics.")
+
         return Llama(
             model_path=model_path,
             n_ctx=gen_config.get("n_ctx", 2048),
-            n_gpu_layers=gen_config.get("n_gpu_layers", -1),
-            verbose=gen_config.get("verbose", False)
+            n_gpu_layers=n_gpu_layers,
+            verbose=True  # Always on for better debugging
         )
 
     def get_model(self, model_type: ModelType) -> Any:
@@ -83,15 +99,32 @@ class ModelManager:
         return self.loaded_models.get(model_type)
 
     def unload_model(self, model_type: ModelType):
-        """Unloads a specific model and frees up VRAM."""
+        """Unloads a specific model, frees up VRAM, and confirms garbage collection."""
         if model_type in self.loaded_models:
-            print(f"Unloading '{model_type}' model...")
-            self.loaded_models[model_type] = None
-            del self.loaded_models[model_type]
+            print(f"Attempting to unload '{model_type}' model...")
+            model_instance = self.loaded_models.pop(model_type, None)
+
+            if model_instance is None:
+                print(f"Model '{model_type}' was already unloaded or not in manager.")
+                return
+
+            # Create a weak reference to check for garbage collection
+            model_ref = weakref.ref(model_instance)
+            del model_instance
+
+            # Manually trigger garbage collection and clear CUDA cache
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-            print(f"Successfully unloaded '{model_type}' model.")
+
+            if model_ref() is None:
+                print(f"Successfully garbage collected and unloaded '{model_type}' model.")
+            else:
+                st.warning(
+                    f"Failed to unload '{model_type}' model completely. "
+                    "There might be other references to it preventing memory release."
+                )
+                print(f"WARNING: Failed to garbage collect '{model_type}' model. Other references may exist.")
 
     def unload_all_models(self):
         """Unloads all currently loaded models."""

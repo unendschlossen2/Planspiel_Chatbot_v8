@@ -281,6 +281,10 @@ if not db_collection or st.session_state.rebuild_triggered:
     time.sleep(3)
     st.rerun()
 
+def reset_chat():
+    """Clears the chat history and reruns the app to reflect the change."""
+    st.session_state.messages = []
+    st.rerun()
 
 # --- UI LAYOUT ---
 
@@ -383,7 +387,7 @@ with right_sidebar:
     st.title("📋 Logs & Steuerung")
 
     # App Control Buttons
-    st.button("Neuer Chat", on_click=lambda: st.session_state.update(messages=[]), use_container_width=True)
+    st.button("Neuer Chat", on_click=reset_chat, use_container_width=True)
     st.button("Datenbank neu aufbauen", on_click=trigger_rebuild, use_container_width=True)
     st.button("App beenden", on_click=exit_app, type="primary", use_container_width=True)
 
